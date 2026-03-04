@@ -1,0 +1,35 @@
+{
+  "name": "@mcp-toolkit/auth",
+  "version": "0.1.0",
+  "description": "Authentication middleware for MCP servers - API key, JWT, and custom strategies",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "auth",
+    "authentication",
+    "api-key",
+    "jwt",
+    "middleware"
+  ],
+  "author": "Sagar Gupta",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prsagar16/mcp-toolkit.git",
+    "directory": "packages/auth"
+  },
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": ">=1.0.0"
+  }
+}

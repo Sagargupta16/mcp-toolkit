@@ -1,0 +1,34 @@
+{
+  "name": "mcp-toolkit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reusable utilities and middleware for building production-ready MCP servers",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present && rm -rf node_modules",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "middleware",
+    "auth",
+    "cache",
+    "rate-limit",
+    "logger"
+  ],
+  "author": "Sagar Gupta",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "typescript": "^5.5.0"
+  }
+}
