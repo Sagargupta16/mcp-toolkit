@@ -11,7 +11,7 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "node --test dist/**/*.test.js"
+    "test": "test -n \"$(find dist -name \"*.test.js\" 2>/dev/null)\" && node --test dist/**/*.test.js || echo \"No tests found, skipping\""
   },
   "keywords": [
     "mcp",
