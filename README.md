@@ -12,13 +12,14 @@ Stop reimplementing auth, caching, rate limiting, and logging for every MCP serv
 | [`@mcp-toolkit/cache`](packages/cache/) | Response caching with TTL, LRU, and Redis support | Beta |
 | [`@mcp-toolkit/rate-limit`](packages/rate-limit/) | Rate limiting with token bucket and sliding window | Beta |
 | [`@mcp-toolkit/logger`](packages/logger/) | Structured logging with JSON output and log levels | Beta |
+| [`@mcp-toolkit/cors`](packages/cors/) | Origin validation middleware | Beta |
 
 ## Quick Start
 
 ### Install
 
 ```bash
-npm install @mcp-toolkit/auth @mcp-toolkit/cache @mcp-toolkit/rate-limit @mcp-toolkit/logger
+npm install @mcp-toolkit/auth @mcp-toolkit/cache @mcp-toolkit/rate-limit @mcp-toolkit/logger @mcp-toolkit/cors
 ```
 
 ### Usage with TypeScript SDK
@@ -148,15 +149,32 @@ const logger = createLogger({
 });
 ```
 
+### CORS
+
+Validate request origins when using HTTP or SSE transport:
+
+```typescript
+import { withCors } from "@mcp-toolkit/cors";
+
+withCors(server, {
+  allowedOrigins: ["https://myapp.com"]
+});
+
+
 ## Architecture
 
 ```
 MCP Client (Claude, Cursor, etc.)
         |
         v
+MCP Client (Claude, Cursor, etc.)
+        |
+        v
 +-------------------------+
 |     MCP Transport       |
 |   (stdio / SSE / HTTP)  |
++-------------------------+
+|   @mcp-toolkit/cors     |  <-- Origin validation
 +-------------------------+
 |   @mcp-toolkit/auth     |  <-- Authentication layer
 +-------------------------+
