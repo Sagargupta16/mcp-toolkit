@@ -1,7 +1,7 @@
 {
-  "name": "@mcp-toolkit/cache",
+  "name": "@mcp-toolkit/cors",
   "version": "0.1.0",
-  "description": "Response caching middleware for MCP servers - LRU and TTL strategies",
+  "description": "Origin validation middleware for MCP servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -16,18 +16,17 @@
   "keywords": [
     "mcp",
     "model-context-protocol",
-    "cache",
-    "caching",
-    "lru",
-    "ttl",
+    "cors",
+    "origin",
+    "security",
     "middleware"
   ],
   "author": "Sagar Gupta",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/prsagar16/mcp-toolkit.git",
-    "directory": "packages/cache"
+    "url": "https://github.com/Sagargupta16/mcp-toolkit.git",
+    "directory": "packages/cors"
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": ">=1.0.0"

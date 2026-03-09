@@ -5,7 +5,7 @@
  * Supports JSON and text formats, multiple log levels, and pluggable transports.
  */
 
-import { writeFileSync, appendFileSync, mkdirSync } from "fs";
+import { appendFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 
 // ---------------------------------------------------------------------------
