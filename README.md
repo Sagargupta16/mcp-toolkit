@@ -159,14 +159,11 @@ import { withCors } from "@mcp-toolkit/cors";
 withCors(server, {
   allowedOrigins: ["https://myapp.com"]
 });
-
+```
 
 ## Architecture
 
 ```
-MCP Client (Claude, Cursor, etc.)
-        |
-        v
 MCP Client (Claude, Cursor, etc.)
         |
         v
