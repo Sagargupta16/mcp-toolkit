@@ -157,8 +157,10 @@ Validate request origins when using HTTP or SSE transport:
 import { withCors } from "@mcp-toolkit/cors";
 
 withCors(server, {
-  allowedOrigins: ["https://myapp.com"]
+  allowedOrigins: ["https://myapp.com"],
+  allowedMethods: ["GET", "POST"]
 });
+// Optionally restrict HTTP methods
 ```
 
 ## Architecture
