@@ -15,6 +15,11 @@ export interface CorsOptions {
    * Use "*" to allow any origin.
    */
   allowedOrigins: string[] | "*";
+
+  /**
+   * Allowed HTTP methods
+   */
+  allowedMethods?: string[];
 }
 
 /** Error thrown when a request origin is not allowed. */
@@ -24,6 +29,15 @@ export class CorsError extends Error {
   constructor(origin?: string) {
     super(`Origin "${origin ?? "unknown"}" is not allowed`);
     this.name = "CorsError";
+  }
+}
+
+export class CorsMethodError extends Error {
+  public readonly code = "CORS_METHOD_BLOCKED";
+
+  constructor(method?: string) {
+    super(`Method "${method ?? "unknown"}" is not allowed`);
+    this.name = "CorsMethodError";
   }
 }
 
@@ -47,6 +61,9 @@ export function withCors<T extends McpServerLike>(
 ): T {
 
   const allowed = options.allowedOrigins;
+  const allowedSet = allowed === "*" ? null : new Set(allowed);
+
+  const allowedMethods = options.allowedMethods?.map(m => m.toUpperCase());
 
   const originalTool = server.tool.bind(server);
 
@@ -81,9 +98,16 @@ export function withCors<T extends McpServerLike>(
 
       const origin = headers?.["origin"] as string | undefined;
 
-      if (allowed !== "*") {
-        if (!origin || !allowed.includes(origin)) {
+      if (allowedSet) {
+        if (!origin || !allowedSet.has(origin)) {
           throw new CorsError(origin);
+        }
+      }
+
+      const method = (headers?.["method"] as string | undefined)?.toUpperCase();
+      if (allowedMethods) {
+        if (!method || !allowedMethods.includes(method)) {
+          throw new CorsMethodError(method);
         }
       }
 
@@ -106,3 +130,4 @@ export interface McpServerLike {
   tool: (...args: unknown[]) => unknown;
   [key: string]: unknown;
 }
+
