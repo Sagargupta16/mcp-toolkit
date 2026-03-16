@@ -25,7 +25,7 @@
   "author": "Sagar Gupta",
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

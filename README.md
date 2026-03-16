@@ -2,15 +2,15 @@
 
 > Reusable utilities and middleware for building production-ready MCP servers.
 
-Stop reimplementing auth, caching, rate limiting, and logging for every MCP server. MCP Toolkit provides drop-in packages that work with both the TypeScript and Python SDKs.
+Stop reimplementing auth, caching, rate limiting, and logging for every MCP server. MCP Toolkit provides drop-in packages that work with the TypeScript SDK.
 
 ## Packages
 
 | Package | Description | Status |
 |---------|-------------|--------|
-| [`@mcp-toolkit/auth`](packages/auth/) | API key, OAuth, and JWT authentication | Beta |
-| [`@mcp-toolkit/cache`](packages/cache/) | Response caching with TTL, LRU, and Redis support | Beta |
-| [`@mcp-toolkit/rate-limit`](packages/rate-limit/) | Rate limiting with token bucket and sliding window | Beta |
+| [`@mcp-toolkit/auth`](packages/auth/) | API key and JWT authentication | Beta |
+| [`@mcp-toolkit/cache`](packages/cache/) | Response caching with TTL and LRU | Beta |
+| [`@mcp-toolkit/rate-limit`](packages/rate-limit/) | Rate limiting with token bucket | Beta |
 | [`@mcp-toolkit/logger`](packages/logger/) | Structured logging with JSON output and log levels | Beta |
 | [`@mcp-toolkit/cors`](packages/cors/) | Origin validation middleware | Beta |
 
@@ -70,30 +70,6 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 ```
 
-### Usage with Python SDK
-
-```python
-from mcp.server import Server
-from mcp_toolkit.auth import with_auth, ApiKeyAuth
-from mcp_toolkit.cache import with_cache, LRUCache
-from mcp_toolkit.rate_limit import with_rate_limit, TokenBucket
-from mcp_toolkit.logger import create_logger
-
-logger = create_logger(level="info", format="json")
-server = Server("my-server")
-
-with_auth(server, ApiKeyAuth(keys=[os.environ["MCP_API_KEY"]]))
-with_rate_limit(server, TokenBucket(max_tokens=100, refill_rate=10))
-with_cache(server, LRUCache(ttl=300, max_size=1000))
-
-@server.tool()
-async def get_data(query: str) -> str:
-    """Fetch data with auth + cache + rate limiting."""
-    logger.info("Fetching data", query=query)
-    result = await fetch_data(query)
-    return json.dumps(result)
-```
-
 ## Package Details
 
 ### Auth
@@ -117,7 +93,7 @@ Response caching with multiple strategies:
 
 ```typescript
 withCache(server, {
-  strategy: "lru",       // lru | ttl | redis
+  strategy: "lru",       // lru | ttl
   ttl: 300,              // seconds
   maxSize: 1000,         // max entries
   keyGenerator: (toolName, args) => `${toolName}:${JSON.stringify(args)}`,
@@ -130,7 +106,7 @@ Protect your server from abuse:
 
 ```typescript
 withRateLimit(server, {
-  strategy: "token-bucket",  // token-bucket | sliding-window | fixed-window
+  strategy: "token-bucket",
   maxTokens: 100,
   refillRate: 10,            // per second
   onLimited: (req) => logger.warn("Rate limited", { tool: req.toolName }),
@@ -171,7 +147,7 @@ MCP Client (Claude, Cursor, etc.)
         v
 +-------------------------+
 |     MCP Transport       |
-|   (stdio / SSE / HTTP)  |
+| (stdio / Streamable HTTP)|
 +-------------------------+
 |   @mcp-toolkit/cors     |  <-- Origin validation
 +-------------------------+
@@ -193,8 +169,6 @@ MCP Client (Claude, Cursor, etc.)
 See the [`examples/`](examples/) directory:
 
 - [Basic server with auth](examples/basic-auth-server.ts)
-- [Cached API proxy](examples/cached-api-proxy.ts)
-- [Rate-limited public server](examples/rate-limited-server.ts)
 - [Full production setup](examples/production-server.ts)
 
 ## Contributing
