@@ -57,7 +57,7 @@ withCache(server, {
   strategy: "lru",
 });
 
-// Define tools — middleware applies automatically
+// Define tools - middleware applies automatically
 server.tool("get-data", "Fetch data with auth + cache + rate limiting", {
   query: { type: "string", description: "Search query" },
 }, async ({ query }) => {
@@ -173,7 +173,7 @@ See the [`examples/`](examples/) directory:
 
 ## Contributing
 
-Contributions welcome — new middleware, bug fixes, or docs improvements.
+Contributions welcome - new middleware, bug fixes, or docs improvements.
 
 1. Fork this repo
 2. Create a feature branch (`git checkout -b feat/my-middleware`)
