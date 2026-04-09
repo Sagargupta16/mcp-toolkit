@@ -1,5 +1,11 @@
 # MCP Toolkit
 
+![GitHub stars](https://img.shields.io/github/stars/Sagargupta16/mcp-toolkit?style=flat-square)
+![GitHub forks](https://img.shields.io/github/forks/Sagargupta16/mcp-toolkit?style=flat-square)
+![License](https://img.shields.io/github/license/Sagargupta16/mcp-toolkit?style=flat-square)
+![Last Commit](https://img.shields.io/github/last-commit/Sagargupta16/mcp-toolkit?style=flat-square)
+![npm](https://img.shields.io/badge/npm-mcp--toolkit-red?style=flat-square&logo=npm)
+
 > Reusable utilities and middleware for building production-ready MCP servers.
 
 Stop reimplementing auth, caching, rate limiting, and logging for every MCP server. MCP Toolkit provides drop-in packages that work with the TypeScript SDK.
@@ -181,6 +187,15 @@ Contributions welcome - new middleware, bug fixes, or docs improvements.
 4. Submit a PR
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
+
+## More AI Developer Tools
+
+| Project | Description |
+|---------|-------------|
+| [claude-cost-optimizer](https://github.com/Sagargupta16/claude-cost-optimizer) | Save 30-60% on Claude Code costs - proven strategies and benchmarks |
+| [ai-git-hooks](https://github.com/Sagargupta16/ai-git-hooks) | AI-powered git hooks - auto-review diffs, generate commit messages, security scanning |
+| [claude-code-recipes](https://github.com/Sagargupta16/claude-code-recipes) | 50+ copy-paste recipes for Claude Code - commands, subagents, hooks, skills |
+| [agent-recipes](https://github.com/Sagargupta16/agent-recipes) | AI agent workflows for real-world dev tasks - code review, testing, security |
 
 ## License
 
