@@ -28,8 +28,10 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@hono/node-server": "^1.19.14",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@types/node": "^25.3.5",
+    "hono": "^4.12.14",
     "typescript": "^5.5.0"
   }
 }
