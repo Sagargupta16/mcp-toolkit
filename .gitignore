@@ -42,3 +42,6 @@ tmp/
 # Lock files (using npm)
 yarn.lock
 pnpm-lock.yaml
+
+# Added for consistency
+.next/
