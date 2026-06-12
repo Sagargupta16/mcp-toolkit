@@ -1,10 +1,10 @@
 # MCP Toolkit
 
-![GitHub stars](https://img.shields.io/github/stars/Sagargupta16/mcp-toolkit?style=flat-square)
-![GitHub forks](https://img.shields.io/github/forks/Sagargupta16/mcp-toolkit?style=flat-square)
-![License](https://img.shields.io/github/license/Sagargupta16/mcp-toolkit?style=flat-square)
-![Last Commit](https://img.shields.io/github/last-commit/Sagargupta16/mcp-toolkit?style=flat-square)
-![npm](https://img.shields.io/badge/npm-mcp--toolkit-red?style=flat-square&logo=npm)
+![GitHub stars](https://img.shields.io/github/stars/Sagargupta16/mcp-toolkit?style=flat-square&cacheSeconds=86400)
+![GitHub forks](https://img.shields.io/github/forks/Sagargupta16/mcp-toolkit?style=flat-square&cacheSeconds=86400)
+![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
+![Last Commit](https://img.shields.io/github/last-commit/Sagargupta16/mcp-toolkit?style=flat-square&cacheSeconds=86400)
+![Status](https://img.shields.io/badge/status-pre--release-orange?style=flat-square)
 
 > Reusable utilities and middleware for building production-ready MCP servers.
 
@@ -24,8 +24,13 @@ Stop reimplementing auth, caching, rate limiting, and logging for every MCP serv
 
 ### Install
 
+The `@mcp-toolkit/*` packages are not yet published to npm. Until then, clone and build from source:
+
 ```bash
-npm install @mcp-toolkit/auth @mcp-toolkit/cache @mcp-toolkit/rate-limit @mcp-toolkit/logger @mcp-toolkit/cors
+git clone https://github.com/Sagargupta16/mcp-toolkit.git
+cd mcp-toolkit
+npm install
+npm run build
 ```
 
 ### Usage with TypeScript SDK
