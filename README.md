@@ -180,6 +180,7 @@ MCP Client (Claude, Cursor, etc.)
 See the [`examples/`](examples/) directory:
 
 - [Basic server with auth](examples/basic-auth-server.ts)
+- [Full middleware stack](examples/full-middleware-stack.ts)
 - [Full production setup](examples/production-server.ts)
 
 ## Contributing
