@@ -200,16 +200,40 @@ export class AuthError extends Error {
 // Strategy implementations
 // ---------------------------------------------------------------------------
 
+/**
+ * Constant-time check of a candidate credential against a set of valid keys.
+ *
+ * A plain `Set.has()` / `===` comparison short-circuits on the first differing
+ * byte, leaking key material through response timing when the server is exposed
+ * over a network transport (HTTP/SSE). We compare against every key with
+ * `crypto.timingSafeEqual` so the running time does not depend on how many
+ * leading bytes matched.
+ */
+function isValidApiKey(candidate: string, validKeys: string[]): boolean {
+  const crypto = require("crypto") as typeof import("crypto");
+  const candidateBuf = Buffer.from(candidate);
+  let match = false;
+  for (const key of validKeys) {
+    const keyBuf = Buffer.from(key);
+    // timingSafeEqual requires equal lengths; the length comparison itself is
+    // not secret-dependent, and we always run the full loop.
+    if (keyBuf.length === candidateBuf.length && crypto.timingSafeEqual(keyBuf, candidateBuf)) {
+      match = true;
+    }
+  }
+  return match;
+}
+
 function createApiKeyVerifier(options: ApiKeyAuthOptions) {
   const header = (options.header ?? "x-api-key").toLowerCase();
-  const validKeys = new Set(options.keys);
+  const validKeys = [...options.keys];
 
   return async (meta: Record<string, unknown>): Promise<AuthContext> => {
     const key = extractFromMeta(meta, header);
     if (!key) {
       throw new AuthError(`Missing API key in "${header}" header`);
     }
-    if (!validKeys.has(key)) {
+    if (!isValidApiKey(key, validKeys)) {
       throw new AuthError("Invalid API key");
     }
     return {

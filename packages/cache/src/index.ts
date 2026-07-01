@@ -226,6 +226,33 @@ const defaultKeyGenerator: KeyGenerator = (toolName, args) => {
 };
 
 // ---------------------------------------------------------------------------
+// Caller identity extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Pull the authenticated caller's subject out of the handler arguments.
+ *
+ * The MCP SDK passes an `extra` object as the last handler argument. When
+ * `withAuth` is composed, it attaches an `AuthContext` at `extra.auth` whose
+ * `payload.sub` is the caller identity. Returns `undefined` when no identity
+ * is present so the cache key stays unchanged for unauthenticated setups.
+ */
+function extractSubject(handlerArgs: unknown[]): string | undefined {
+  if (handlerArgs.length < 2) return undefined;
+  const extra = handlerArgs[handlerArgs.length - 1];
+  if (!extra || typeof extra !== "object") return undefined;
+
+  const auth = (extra as Record<string, unknown>)["auth"];
+  if (!auth || typeof auth !== "object") return undefined;
+
+  const payload = (auth as Record<string, unknown>)["payload"];
+  if (!payload || typeof payload !== "object") return undefined;
+
+  const sub = (payload as Record<string, unknown>)["sub"];
+  return typeof sub === "string" ? sub : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -286,7 +313,19 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
     args[handlerIndex] = async function cachedHandler(...handlerArgs: unknown[]) {
       // First positional arg to the handler is the parsed params object
       const params = (handlerArgs[0] ?? {}) as Record<string, unknown>;
-      const cacheKey = keyGen(toolName ?? "unknown", params);
+      let cacheKey = keyGen(toolName ?? "unknown", params);
+
+      // Scope the cache entry to the authenticated caller when identity is
+      // available. `withAuth` attaches an AuthContext at `extra.auth` (the
+      // last handler argument), where `payload.sub` is the caller's id.
+      // Without this, identity-dependent responses would leak across users
+      // when withCache is composed with withAuth. When no identity is present
+      // (auth not composed / unauthenticated), the key is unchanged, so
+      // behaviour is identical to before.
+      const subject = extractSubject(handlerArgs);
+      if (subject !== undefined) {
+        cacheKey = `sub:${subject}|${cacheKey}`;
+      }
 
       const cached = cache.get(cacheKey);
       if (cached !== undefined) {
