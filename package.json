@@ -2,7 +2,7 @@
   "name": "mcp-toolkit",
   "version": "0.1.0",
   "private": true,
-  "description": "Reusable utilities and middleware for building production-ready MCP servers",
+  "description": "TypeScript middleware toolkit for MCP servers - authentication, caching, rate limiting, CORS, logging (beta)",
   "workspaces": [
     "packages/*"
   ],
@@ -20,7 +20,8 @@
     "auth",
     "cache",
     "rate-limit",
-    "logger"
+    "logger",
+    "cors"
   ],
   "author": "Sagar Gupta",
   "license": "MIT",
@@ -28,11 +29,11 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
-    "@hono/node-server": "^1.19.14",
+    "@hono/node-server": "^2.0.8",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@types/node": "^25.3.5",
     "hono": "^4.12.18",
-    "typescript": "^5.5.0"
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "fast-uri": "^3.1.2",

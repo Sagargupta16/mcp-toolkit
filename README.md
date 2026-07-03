@@ -6,9 +6,9 @@
 ![Last Commit](https://img.shields.io/github/last-commit/Sagargupta16/mcp-toolkit?style=flat-square&cacheSeconds=86400)
 ![Status](https://img.shields.io/badge/status-pre--release-orange?style=flat-square)
 
-> Reusable utilities and middleware for building production-ready MCP servers.
+> TypeScript middleware toolkit for MCP servers - authentication, caching, rate limiting, CORS, logging (beta).
 
-Stop reimplementing auth, caching, rate limiting, and logging for every MCP server. MCP Toolkit provides drop-in packages that work with the TypeScript SDK.
+Stop reimplementing auth, caching, rate limiting, CORS, and logging for every MCP server. MCP Toolkit provides drop-in packages that work with the TypeScript SDK.
 
 ## Packages
 
