@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.1] - 2026-09-02
+
+- Bump hono to 4.13.5, fast-uri to 3.1.7, ip-address to 10.7.0 to patch Dependabot security alerts
+
 ## [1.1.0] - 2026-03-16
 
 - Add PR template for standardized PRs
