@@ -33,10 +33,10 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@types/node": "^25.3.5",
     "hono": "^4.12.34",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.0"
   },
   "overrides": {
-    "fast-uri": "^3.1.5",
+    "fast-uri": "^4.0.0",
     "ip-address": "^10.3.1"
   }
 }
