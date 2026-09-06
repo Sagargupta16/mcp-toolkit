@@ -14,7 +14,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { withAuth, AuthError } from "@mcp-toolkit/auth";
+import { z } from "zod";
+import { withAuth } from "@mcp-toolkit/auth";
 import { createLogger } from "@mcp-toolkit/logger";
 
 // ---------------------------------------------------------------------------
@@ -38,7 +39,7 @@ const logger = createLogger({
 });
 
 // ---------------------------------------------------------------------------
-// Server setup — API Key authentication
+// Server setup -- API Key authentication
 // ---------------------------------------------------------------------------
 
 async function startApiKeyServer(): Promise<void> {
@@ -54,14 +55,15 @@ async function startApiKeyServer(): Promise<void> {
     header: "x-api-key",
   });
 
-  // Register a simple tool
+  // Register a simple tool. Tool params are a Zod *raw shape* -- a plain object
+  // whose values are Zod schemas -- not JSON Schema.
   server.tool(
     "greet",
     "Greet a user by name",
     {
-      name: { type: "string", description: "The name to greet" },
+      name: z.string().describe("The name to greet"),
     },
-    async ({ name }: { name: string }) => {
+    async ({ name }) => {
       logger.info("Greeting user", { name });
       return {
         content: [
@@ -79,8 +81,10 @@ async function startApiKeyServer(): Promise<void> {
     "whoami",
     "Return information about the authenticated caller",
     {},
-    async (_params: Record<string, unknown>, extra: Record<string, unknown>) => {
-      const auth = extra?.["auth"] as
+    async (_params, extra) => {
+      // `withAuth` attaches the AuthContext at `extra.auth`. That key is not
+      // part of the SDK's own extra type, so read it through a cast.
+      const auth = (extra as unknown as Record<string, unknown>)["auth"] as
         | { authenticated: boolean; payload?: Record<string, unknown> }
         | undefined;
 
@@ -109,7 +113,7 @@ async function startApiKeyServer(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Server setup — JWT authentication
+// Server setup -- JWT authentication
 // ---------------------------------------------------------------------------
 
 async function startJwtServer(): Promise<void> {
@@ -131,9 +135,9 @@ async function startJwtServer(): Promise<void> {
     "get-secret-data",
     "Retrieve secret data (requires JWT auth)",
     {
-      category: { type: "string", description: "Data category to fetch" },
+      category: z.string().describe("Data category to fetch"),
     },
-    async ({ category }: { category: string }) => {
+    async ({ category }) => {
       logger.info("Fetching secret data", { category });
 
       const secrets: Record<string, string> = {

@@ -230,19 +230,14 @@ const defaultKeyGenerator: KeyGenerator = (toolName, args) => {
 // ---------------------------------------------------------------------------
 
 /**
- * Pull the authenticated caller's subject out of the handler arguments.
+ * Pull the authenticated caller's subject out of the per-request `extra` object.
  *
- * The MCP SDK passes an `extra` object as the last handler argument. When
- * `withAuth` is composed, it attaches an `AuthContext` at `extra.auth` whose
- * `payload.sub` is the caller identity. Returns `undefined` when no identity
- * is present so the cache key stays unchanged for unauthenticated setups.
+ * When `withAuth` is composed it attaches an `AuthContext` at `extra.auth` whose
+ * `payload.sub` is the caller identity. Returns `undefined` when no identity is
+ * present so the cache key stays unchanged for unauthenticated setups.
  */
-function extractSubject(handlerArgs: unknown[]): string | undefined {
-  if (handlerArgs.length < 2) return undefined;
-  const extra = handlerArgs[handlerArgs.length - 1];
-  if (!extra || typeof extra !== "object") return undefined;
-
-  const auth = (extra as Record<string, unknown>)["auth"];
+function extractSubject(extra: Record<string, unknown>): string | undefined {
+  const auth = extra["auth"];
   if (!auth || typeof auth !== "object") return undefined;
 
   const payload = (auth as Record<string, unknown>)["payload"];
@@ -286,34 +281,22 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
   const ttl = options.ttl ?? 300;
   const keyGen = options.keyGenerator ?? defaultKeyGenerator;
 
-  // Both strategies use the same LRU cache under the hood. The only
-  // difference is cosmetic / for future extension.
+  // Both `"lru"` and `"ttl"` are served by one LRU-with-TTL cache: entries leave
+  // when they exceed `ttl` OR when `maxSize` is reached, whichever comes first.
+  // The strategy field does not currently change eviction behaviour.
   const cache = new LRUCache<unknown>(maxSize, ttl);
 
   // Expose cache instance on the server for inspection / manual invalidation
-  (server as Record<string, unknown>)["__cache"] = cache;
+  (server as unknown as Record<string, unknown>)["__cache"] = cache;
 
-  const originalTool = server.tool.bind(server);
-
-  const wrappedTool = function toolWithCache(...args: unknown[]): unknown {
-    // The handler is the last argument
-    const handlerIndex = args.findIndex(
-      (a, i) => typeof a === "function" && i === args.length - 1,
-    );
-
-    if (handlerIndex === -1) {
-      return (originalTool as (...a: unknown[]) => unknown)(...args);
-    }
-
-    // Derive the tool name.  It is the first string argument.
-    const toolName = args.find((a) => typeof a === "string") as string | undefined;
-
-    const originalHandler = args[handlerIndex] as (...a: unknown[]) => unknown;
-
-    args[handlerIndex] = async function cachedHandler(...handlerArgs: unknown[]) {
-      // First positional arg to the handler is the parsed params object
-      const params = (handlerArgs[0] ?? {}) as Record<string, unknown>;
-      let cacheKey = keyGen(toolName ?? "unknown", params);
+  patchToolRegistrars(server, (originalHandler, toolName) => {
+    return async function cachedHandler(...handlerArgs: unknown[]) {
+      // Params only exist when the tool declared an input schema; otherwise the
+      // SDK passes the `extra` object alone. Keying off that object would mix
+      // per-request internals such as `requestId` into the key, so a schema-less
+      // tool could never hit its own cache entry.
+      const { params, extra } = splitHandlerArgs(handlerArgs);
+      let cacheKey = keyGen(toolName, params);
 
       // Scope the cache entry to the authenticated caller when identity is
       // available. `withAuth` attaches an AuthContext at `extra.auth` (the
@@ -322,7 +305,7 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
       // when withCache is composed with withAuth. When no identity is present
       // (auth not composed / unauthenticated), the key is unchanged, so
       // behaviour is identical to before.
-      const subject = extractSubject(handlerArgs);
+      const subject = extractSubject(extra);
       if (subject !== undefined) {
         cacheKey = `sub:${subject}|${cacheKey}`;
       }
@@ -336,11 +319,7 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
       cache.set(cacheKey, result);
       return result;
     };
-
-    return (originalTool as (...a: unknown[]) => unknown)(...args);
-  };
-
-  server.tool = wrappedTool as typeof server.tool;
+  });
 
   return server;
 }
@@ -350,15 +329,133 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
  * Useful for manual invalidation or gathering statistics.
  */
 export function getCache<T = unknown>(server: McpServerLike): LRUCache<T> | undefined {
-  return (server as Record<string, unknown>)["__cache"] as LRUCache<T> | undefined;
+  return (server as unknown as Record<string, unknown>)["__cache"] as LRUCache<T> | undefined;
 }
 
 // ---------------------------------------------------------------------------
-// Minimal type for the MCP server
+// Minimal MCP server type + registration patching
+//
+// This block is deliberately identical in every @mcp-toolkit package so each
+// one stays publishable on its own, with no internal dependency and without
+// requiring the SDK at compile time. Keep the four copies in sync.
 // ---------------------------------------------------------------------------
 
-/** Minimal shape of an MCP server that `withCache` can wrap. */
+/** A tool handler as the SDK invokes it: `(params, extra)` or `(extra)`. */
+type ToolHandler = (...args: unknown[]) => unknown;
+
+/** The parsed params and the per-request `extra` object of one handler call. */
+interface HandlerCall {
+  params: Record<string, unknown>;
+  extra: Record<string, unknown>;
+}
+
+/**
+ * Split the arguments the SDK passed to a tool handler.
+ *
+ * The arity depends on whether the tool declared an input schema: the SDK calls
+ * `handler(params, extra)` when it did and `handler(extra)` when it did not, so
+ * `extra` is always the LAST argument and params only exist from arity two up.
+ * Reading `extra` only when more than one argument arrived made every
+ * schema-less tool invisible to the credential and header lookups above.
+ */
+function splitHandlerArgs(handlerArgs: unknown[]): HandlerCall {
+  const last = handlerArgs[handlerArgs.length - 1];
+  const first = handlerArgs.length > 1 ? handlerArgs[0] : undefined;
+  return {
+    params: (first && typeof first === "object" ? first : {}) as Record<string, unknown>,
+    extra: (last && typeof last === "object" ? last : {}) as Record<string, unknown>,
+  };
+}
+
+/**
+ * Minimal shape of an MCP server that `withCache` can wrap.
+ *
+ * The parameters are typed `any` on purpose. The SDK declares `tool()` as a set
+ * of overloads starting with `tool(name: string, ...)`, and because function
+ * parameters are contravariant, a narrower signature such as
+ * `(...args: unknown[]) => unknown` makes a real `McpServer` *unassignable* to
+ * this interface -- callers would need an `as any` cast to use the middleware
+ * from strict TypeScript.
+ */
 export interface McpServerLike {
-  tool: (...args: unknown[]) => unknown;
-  [key: string]: unknown;
+  /** Deprecated SDK entry point (`tool(name, ...rest, handler)`), still supported. */
+  tool: (...args: any[]) => any;
+  /** Current SDK entry point (`registerTool(name, config, handler)`). */
+  registerTool?: (...args: any[]) => any;
+}
+
+/**
+ * Wrap the handler of every tool registration call made on `server`.
+ *
+ * Both `tool(name, ...rest, handler)` and `registerTool(name, config, handler)`
+ * take the handler as their last argument, so a single wrapper covers both.
+ * Patching `registerTool` as well as `tool` matters: without it, tools
+ * registered through the current SDK API bypass the middleware silently.
+ *
+ * @param server - The server to patch.
+ * @param wrap - Receives the original handler and the tool name, and returns
+ *   the handler to register in its place.
+ */
+function patchToolRegistrars(
+  server: McpServerLike,
+  wrap: (handler: ToolHandler, toolName: string) => ToolHandler,
+): void {
+  const target = server as unknown as Record<string, unknown>;
+
+  for (const method of ["tool", "registerTool"] as const) {
+    const original = target[method];
+    if (typeof original !== "function") continue;
+
+    const bound = (original as ToolHandler).bind(server);
+
+    target[method] = function patched(...args: unknown[]): unknown {
+      const handlerIndex = args.length - 1;
+      if (handlerIndex < 0 || typeof args[handlerIndex] !== "function") {
+        // Not a call we recognise (e.g. a partial registration) -- forward it.
+        return bound(...args);
+      }
+
+      const toolName = (args.find((a) => typeof a === "string") as string | undefined) ?? "unknown";
+      args[handlerIndex] = wrap(args[handlerIndex] as ToolHandler, toolName);
+      const registered = bound(...args);
+      guardRegisteredHandler(registered, wrap, toolName);
+      return registered;
+    };
+  }
+}
+
+/**
+ * Keep the middleware in place when a handler is replaced after registration.
+ *
+ * `registerTool` returns a `RegisteredTool`, and its `update({ callback })`
+ * assigns straight to `registeredTool.handler`. Without this guard that call --
+ * or a direct `registered.handler = fn` -- installs an unwrapped handler and
+ * drops the middleware silently, the same bypass as an unpatched `registerTool`.
+ *
+ * A wrapping accessor covers both routes. It delegates to whatever accessor
+ * another `withX` already installed, so composed middleware keeps its order.
+ */
+function guardRegisteredHandler(
+  registered: unknown,
+  wrap: (handler: ToolHandler, toolName: string) => ToolHandler,
+  toolName: string,
+): void {
+  if (!registered || typeof registered !== "object") return;
+
+  const target = registered as Record<string, unknown>;
+  const existing = Object.getOwnPropertyDescriptor(target, "handler");
+  if (!existing || existing.configurable === false) return;
+
+  let own = existing.get ? undefined : existing.value;
+
+  Object.defineProperty(target, "handler", {
+    configurable: true,
+    enumerable: existing.enumerable !== false,
+    get: () => (existing.get ? existing.get.call(target) : own),
+    set: (next: unknown) => {
+      const wrapped = typeof next === "function" ? wrap(next as ToolHandler, toolName) : next;
+      if (existing.set) existing.set.call(target, wrapped);
+      else own = wrapped;
+    },
+  });
 }

@@ -38,9 +38,11 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ### Prerequisites
 
-- **Node.js** >= 18.0.0
-- **npm** >= 9.0.0
-- **TypeScript** >= 5.0.0
+- **Node.js** >= 20.0.0 (the `engines` floor); 24 recommended, which is what `.nvmrc`
+  pins and CI runs
+- **npm** -- the workspace layout and the committed `package-lock.json` assume it; do not
+  swap in another package manager
+- **TypeScript** >= 7.0.0
 
 ### Install Dependencies
 
@@ -77,17 +79,21 @@ mcp-toolkit/
     cache/          # @mcp-toolkit/cache - Caching middleware
     rate-limit/     # @mcp-toolkit/rate-limit - Rate limiting middleware
     logger/         # @mcp-toolkit/logger - Structured logging
+    cors/           # @mcp-toolkit/cors - Origin validation middleware
   examples/         # Example MCP servers using the toolkit
   package.json      # Root package.json (npm workspaces)
   tsconfig.json     # Root TypeScript configuration
+  tsconfig.examples.json  # Typechecks examples/ (npm run typecheck:examples)
 ```
 
 Each package follows the same internal structure:
 
 ```
 packages/<name>/
+  README.md         # Package docs, published to npm
   src/
     index.ts        # Public API exports
+    index.test.ts   # Tests, run by node --test after a build
   package.json
   tsconfig.json
 ```
@@ -113,9 +119,15 @@ mkdir -p packages/my-middleware/src
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/**/*.test.js",
-    "lint": "tsc --noEmit"
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit",
+    "test": "node --test \"dist/**/*.test.js\""
   },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md"
+  ],
   "keywords": ["mcp", "middleware", "my-middleware"],
   "license": "MIT",
   "peerDependencies": {
@@ -139,38 +151,59 @@ mkdir -p packages/my-middleware/src
 
 ### 4. Implement the Middleware
 
-Your middleware should follow the `with<Name>(server, options)` pattern:
+Your middleware should follow the `with<Name>(server, options)` pattern. Copy the
+`McpServerLike` + `patchToolRegistrars` block from the bottom of any existing package
+verbatim -- it is duplicated on purpose so each package publishes without an internal
+dependency, and the four copies must stay identical:
 
 ```typescript
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-
 export interface MyMiddlewareOptions {
   // Define your options here
 }
 
-export function withMyMiddleware(
-  server: McpServer,
+export function withMyMiddleware<T extends McpServerLike>(
+  server: T,
   options: MyMiddlewareOptions
-): McpServer {
-  // Intercept server.tool() to wrap handlers
-  const originalTool = server.tool.bind(server);
-
-  server.tool = function (...args: any[]) {
-    // Wrap the handler to add your middleware logic
-    return originalTool(...args);
-  } as typeof server.tool;
+): T {
+  // Patches both `tool()` and `registerTool()`. Patching only `tool()` would let
+  // anything registered through the current SDK API bypass the middleware silently.
+  patchToolRegistrars(server, (originalHandler, toolName) => {
+    return async function myHandler(...handlerArgs: unknown[]) {
+      // Add your middleware logic, then delegate.
+      return originalHandler(...handlerArgs);
+    };
+  });
 
   return server;
 }
 ```
 
+Two things that are easy to get wrong:
+
+- Type the patched methods' parameters as `any[]`, not `unknown[]`. The SDK declares
+  `tool()` as overloads starting with `tool(name: string, ...)`, and parameter
+  contravariance makes a narrower signature reject a real `McpServer`.
+- Read request metadata from `extra.requestInfo.headers` and `extra._meta`, not from a
+  key you invented. The SDK does not hand handlers a flat header bag. Only
+  `requestInfo.headers` comes from the transport: `_meta` is JSON-RPC body content the
+  caller wrote, so never settle an allowlist on it.
+- Take `extra` from the LAST handler argument, and expect params only from arity two up.
+  A tool registered without an `inputSchema` is invoked as `handler(extra)`, with no
+  params object at all.
+
 ### 5. Add Tests
 
-Create tests in `src/__tests__/` or alongside source files with `.test.ts` extension.
+Put tests next to the source as `src/index.test.ts`. They compile to
+`dist/index.test.js`, which the package's `test` script picks up via
+`node --test "dist/**/*.test.js"` -- so run `npm run build` first. Test against a small
+fake server object rather than a real `McpServer`, so the suite needs neither the SDK nor
+zod; see any existing package for the pattern.
 
-### 6. Update the Root README
+### 6. Update the Docs
 
-Add your package to the packages table in `README.md`.
+- Add your package to the packages table in the root `README.md`.
+- Add a `packages/<name>/README.md` with install, options, a working example, and the
+  package's caveats. It is listed in `files`, so it becomes the npm landing page.
 
 ## Coding Standards
 
@@ -186,7 +219,10 @@ Add your package to the packages table in `README.md`.
 
 - Write unit tests for all public API functions
 - Test edge cases (invalid inputs, boundary conditions, error paths)
-- Ensure tests pass on Node.js 18 and 20
+- Ensure tests pass on Node.js 24, the version CI runs and `.nvmrc` pins. `engines` still
+  declares `node >= 20`, and nothing in CI exercises that floor, so avoid APIs newer than
+  Node 20 unless you also raise `engines`
+- Tests run against compiled output, so build before testing (`npm run build && npm test`)
 - Run the full test suite before submitting:
   ```bash
   npm test

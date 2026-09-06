@@ -21,6 +21,7 @@ body:
         - New authentication strategy
         - New caching strategy
         - New rate limiting strategy
+        - CORS / origin validation enhancement
         - Logger enhancement
         - Developer experience improvement
         - Other
@@ -37,6 +38,7 @@ body:
         - "@mcp-toolkit/cache"
         - "@mcp-toolkit/rate-limit"
         - "@mcp-toolkit/logger"
+        - "@mcp-toolkit/cors"
         - New package
         - Not applicable
     validations:
