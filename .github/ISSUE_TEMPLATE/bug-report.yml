@@ -20,6 +20,7 @@ body:
         - "@mcp-toolkit/cache"
         - "@mcp-toolkit/rate-limit"
         - "@mcp-toolkit/logger"
+        - "@mcp-toolkit/cors"
         - Multiple packages
         - Other / Not sure
     validations:
@@ -75,7 +76,7 @@ body:
     attributes:
       label: Package Version
       description: What version of the affected package are you using?
-      placeholder: "0.1.0"
+      placeholder: "0.2.0"
     validations:
       required: true
 
@@ -84,9 +85,9 @@ body:
     attributes:
       label: Node.js Version
       options:
-        - "18.x"
         - "20.x"
         - "22.x"
+        - "24.x"
         - Other
     validations:
       required: true

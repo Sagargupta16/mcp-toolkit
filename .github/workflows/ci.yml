@@ -6,6 +6,25 @@ on:
 jobs:
   build:
     uses: Sagargupta16/shared-workflows/.github/workflows/node-ci.yml@main
+    with:
+      # Node 24 matches .nvmrc; the shared workflow otherwise defaults to 22.x.
+      node-version: "24.x"
+      # This repo has a `typecheck` script; the shared workflow needs the opt-in,
+      # or a type error is only caught by whatever the build happens to compile.
+      run-typecheck: true
+  examples:
+    name: Typecheck examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.x"
+          cache: npm
+      - run: npm ci
+      # examples/ imports the packages by their published names, so dist must exist.
+      - run: npm run build
+      - run: npm run typecheck:examples
   security:
     uses: Sagargupta16/shared-workflows/.github/workflows/security-scan.yml@main
     permissions:
