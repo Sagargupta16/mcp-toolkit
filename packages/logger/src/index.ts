@@ -60,7 +60,13 @@ export interface LoggerOptions {
   format?: LogFormat;
   /**
    * Where to write log output.
-   * @default ["stdout"]
+   *
+   * Defaults to `stderr`, not `stdout`. Under the stdio transport `stdout` is
+   * the JSON-RPC channel: the MCP specification says the server "MUST NOT write
+   * anything to its `stdout` that is not a valid MCP message", and "MAY write
+   * UTF-8 strings to its standard error (`stderr`) for logging purposes". Only
+   * pick `"stdout"` when the server does not speak MCP over stdio.
+   * @default ["stderr"]
    */
   transports?: Transport[];
   /**
@@ -274,7 +280,7 @@ function createLoggerImpl(
  * const logger = createLogger({
  *   level: "info",
  *   format: "json",
- *   transports: ["stdout", { type: "file", path: "./app.log" }],
+ *   transports: ["stderr", { type: "file", path: "./app.log" }],
  *   defaultMeta: { service: "my-mcp-server" },
  * });
  *
@@ -285,7 +291,9 @@ function createLoggerImpl(
 export function createLogger(options: LoggerOptions = {}): Logger {
   const level = options.level ?? "info";
   const format = options.format ?? "json";
-  const transports = options.transports ?? ["stdout"];
+  // stderr, not stdout: under the stdio transport stdout carries JSON-RPC and
+  // nothing else, so a log line written there corrupts the session.
+  const transports = options.transports ?? ["stderr"];
   const defaultMeta = options.defaultMeta ?? {};
 
   if (!(level in LOG_LEVEL_VALUES)) {

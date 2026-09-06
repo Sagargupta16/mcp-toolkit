@@ -286,34 +286,19 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
   const ttl = options.ttl ?? 300;
   const keyGen = options.keyGenerator ?? defaultKeyGenerator;
 
-  // Both strategies use the same LRU cache under the hood. The only
-  // difference is cosmetic / for future extension.
+  // Both `"lru"` and `"ttl"` are served by one LRU-with-TTL cache: entries leave
+  // when they exceed `ttl` OR when `maxSize` is reached, whichever comes first.
+  // The strategy field does not currently change eviction behaviour.
   const cache = new LRUCache<unknown>(maxSize, ttl);
 
   // Expose cache instance on the server for inspection / manual invalidation
-  (server as Record<string, unknown>)["__cache"] = cache;
+  (server as unknown as Record<string, unknown>)["__cache"] = cache;
 
-  const originalTool = server.tool.bind(server);
-
-  const wrappedTool = function toolWithCache(...args: unknown[]): unknown {
-    // The handler is the last argument
-    const handlerIndex = args.findIndex(
-      (a, i) => typeof a === "function" && i === args.length - 1,
-    );
-
-    if (handlerIndex === -1) {
-      return (originalTool as (...a: unknown[]) => unknown)(...args);
-    }
-
-    // Derive the tool name.  It is the first string argument.
-    const toolName = args.find((a) => typeof a === "string") as string | undefined;
-
-    const originalHandler = args[handlerIndex] as (...a: unknown[]) => unknown;
-
-    args[handlerIndex] = async function cachedHandler(...handlerArgs: unknown[]) {
+  patchToolRegistrars(server, (originalHandler, toolName) => {
+    return async function cachedHandler(...handlerArgs: unknown[]) {
       // First positional arg to the handler is the parsed params object
       const params = (handlerArgs[0] ?? {}) as Record<string, unknown>;
-      let cacheKey = keyGen(toolName ?? "unknown", params);
+      let cacheKey = keyGen(toolName, params);
 
       // Scope the cache entry to the authenticated caller when identity is
       // available. `withAuth` attaches an AuthContext at `extra.auth` (the
@@ -336,11 +321,7 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
       cache.set(cacheKey, result);
       return result;
     };
-
-    return (originalTool as (...a: unknown[]) => unknown)(...args);
-  };
-
-  server.tool = wrappedTool as typeof server.tool;
+  });
 
   return server;
 }
@@ -350,15 +331,71 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
  * Useful for manual invalidation or gathering statistics.
  */
 export function getCache<T = unknown>(server: McpServerLike): LRUCache<T> | undefined {
-  return (server as Record<string, unknown>)["__cache"] as LRUCache<T> | undefined;
+  return (server as unknown as Record<string, unknown>)["__cache"] as LRUCache<T> | undefined;
 }
 
 // ---------------------------------------------------------------------------
-// Minimal type for the MCP server
+// Minimal MCP server type + registration patching
+//
+// This block is deliberately identical in every @mcp-toolkit package so each
+// one stays publishable on its own, with no internal dependency and without
+// requiring the SDK at compile time. Keep the four copies in sync.
 // ---------------------------------------------------------------------------
 
-/** Minimal shape of an MCP server that `withCache` can wrap. */
+/** A tool handler as the SDK invokes it: `(params, extra)`. */
+type ToolHandler = (...args: unknown[]) => unknown;
+
+/**
+ * Minimal shape of an MCP server that `withCache` can wrap.
+ *
+ * The parameters are typed `any` on purpose. The SDK declares `tool()` as a set
+ * of overloads starting with `tool(name: string, ...)`, and because function
+ * parameters are contravariant, a narrower signature such as
+ * `(...args: unknown[]) => unknown` makes a real `McpServer` *unassignable* to
+ * this interface -- callers would need an `as any` cast to use the middleware
+ * from strict TypeScript.
+ */
 export interface McpServerLike {
-  tool: (...args: unknown[]) => unknown;
-  [key: string]: unknown;
+  /** Deprecated SDK entry point (`tool(name, ...rest, handler)`), still supported. */
+  tool: (...args: any[]) => any;
+  /** Current SDK entry point (`registerTool(name, config, handler)`). */
+  registerTool?: (...args: any[]) => any;
+}
+
+/**
+ * Wrap the handler of every tool registration call made on `server`.
+ *
+ * Both `tool(name, ...rest, handler)` and `registerTool(name, config, handler)`
+ * take the handler as their last argument, so a single wrapper covers both.
+ * Patching `registerTool` as well as `tool` matters: without it, tools
+ * registered through the current SDK API bypass the middleware silently.
+ *
+ * @param server - The server to patch.
+ * @param wrap - Receives the original handler and the tool name, and returns
+ *   the handler to register in its place.
+ */
+function patchToolRegistrars(
+  server: McpServerLike,
+  wrap: (handler: ToolHandler, toolName: string) => ToolHandler,
+): void {
+  const target = server as unknown as Record<string, unknown>;
+
+  for (const method of ["tool", "registerTool"] as const) {
+    const original = target[method];
+    if (typeof original !== "function") continue;
+
+    const bound = (original as ToolHandler).bind(server);
+
+    target[method] = function patched(...args: unknown[]): unknown {
+      const handlerIndex = args.length - 1;
+      if (handlerIndex < 0 || typeof args[handlerIndex] !== "function") {
+        // Not a call we recognise (e.g. a partial registration) -- forward it.
+        return bound(...args);
+      }
+
+      const toolName = (args.find((a) => typeof a === "string") as string | undefined) ?? "unknown";
+      args[handlerIndex] = wrap(args[handlerIndex] as ToolHandler, toolName);
+      return bound(...args);
+    };
+  }
 }
