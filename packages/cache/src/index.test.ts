@@ -18,12 +18,26 @@ interface FakeServer {
   handlers: Map<string, Handler>;
 }
 
+/** The `RegisteredTool` shape the SDK returns: `update` assigns to `handler`. */
+interface FakeRegisteredTool {
+  name: string;
+  handler: Handler;
+  update: (updates: { callback?: Handler }) => void;
+}
+
 function fakeServer(): FakeServer {
   const handlers = new Map<string, Handler>();
-  const record = (...args: unknown[]): unknown => {
+  const record = (...args: unknown[]): FakeRegisteredTool => {
     const name = args[0] as string;
-    handlers.set(name, args[args.length - 1] as Handler);
-    return { name };
+    const registered: FakeRegisteredTool = {
+      name,
+      handler: args[args.length - 1] as Handler,
+      update: (updates) => {
+        if (updates.callback) registered.handler = updates.callback;
+      },
+    };
+    handlers.set(name, registered.handler);
+    return registered;
   };
   return { handlers, tool: record, registerTool: record };
 }
@@ -172,6 +186,45 @@ test("withCache: tools registered via registerTool are cached too", async () => 
   await server.handlers.get("get")!({ q: "x" }, {});
 
   assert.equal(calls, 1);
+});
+
+test("withCache: a schema-less tool hits its own cache entry", async () => {
+  // A tool registered without an inputSchema is invoked as handler(extra): one
+  // argument, no params object. Keying off that object mixed per-request
+  // internals such as requestId into the key, so no call ever hit.
+  const server = withCache(fakeServer(), { strategy: "lru", ttl: 60, maxSize: 10 });
+  let calls = 0;
+  server.registerTool("now", { description: "d" }, () => {
+    calls += 1;
+    return { calls };
+  });
+
+  const first = await server.handlers.get("now")!({ requestId: 1, signal: {} });
+  const second = await server.handlers.get("now")!({ requestId: 2, signal: {} });
+
+  assert.equal(calls, 1, "the second call should be served from cache");
+  assert.deepEqual(first, second);
+});
+
+test("withCache: a handler swapped in after registration is still cached", async () => {
+  const server = withCache(fakeServer(), { strategy: "lru", ttl: 60, maxSize: 10 });
+  const registered = server.registerTool("get", {
+    description: "d",
+    inputSchema: {},
+  }, () => ({ calls: 0 })) as FakeRegisteredTool;
+
+  let calls = 0;
+  registered.update({
+    callback: () => {
+      calls += 1;
+      return { calls };
+    },
+  });
+
+  await registered.handler({ q: "x" }, {});
+  await registered.handler({ q: "x" }, {});
+
+  assert.equal(calls, 1, "the replacement handler is wrapped, so the repeat call hits");
 });
 
 test("withCache: getCache exposes the live cache for invalidation", async () => {

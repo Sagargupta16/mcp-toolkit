@@ -346,16 +346,34 @@ function extractFromRequest(extra: Record<string, unknown>, key: string): string
   return undefined;
 }
 
+/**
+ * Read one metadata value as a string.
+ *
+ * The SDK types HTTP headers as `Record<string, string | string[] | undefined>`
+ * (`IsomorphicHeaders`), so a header can arrive as an array. A single-element
+ * array is that one value. A repeated header is ambiguous and picking a winner
+ * is how header checks get fooled, so it is treated as absent instead.
+ */
+function asHeaderValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
+    return value[0];
+  }
+  return undefined;
+}
+
 /** Extract a value from metadata, doing a case-insensitive key lookup. */
 function extractFromMeta(meta: Record<string, unknown>, key: string): string | undefined {
   // Direct match
-  if (typeof meta[key] === "string") return meta[key] as string;
+  const direct = asHeaderValue(meta[key]);
+  if (direct !== undefined) return direct;
 
   // Case-insensitive search
   const lower = key.toLowerCase();
   for (const k of Object.keys(meta)) {
-    if (k.toLowerCase() === lower && typeof meta[k] === "string") {
-      return meta[k] as string;
+    if (k.toLowerCase() === lower) {
+      const value = asHeaderValue(meta[k]);
+      if (value !== undefined) return value;
     }
   }
 
@@ -419,17 +437,16 @@ export function withAuth<T extends McpServerLike>(server: T, options: AuthOption
   // through the auth verifier before executing.
   patchToolRegistrars(server, (originalHandler) => {
     return async function authHandler(...handlerArgs: unknown[]) {
-      // The MCP SDK passes an "extra" object as the last argument that may
-      // contain transport metadata.  We try to pull auth info from there.
-      const extra = (handlerArgs.length > 1 ? handlerArgs[handlerArgs.length - 1] ?? {} : {}) as Record<string, unknown>;
+      // The SDK passes the per-request "extra" object as the LAST argument, on
+      // its own when the tool declared no input schema. That is where transport
+      // metadata, and therefore the credential, arrives.
+      const { extra } = splitHandlerArgs(handlerArgs);
 
       // Run authentication
       const authCtx = await verify(extra);
 
       // Attach auth context so downstream handlers can access it
-      if (typeof extra === "object" && extra !== null) {
-        (extra as Record<string, unknown>)["auth"] = authCtx;
-      }
+      extra["auth"] = authCtx;
 
       return originalHandler(...handlerArgs);
     };
@@ -446,8 +463,32 @@ export function withAuth<T extends McpServerLike>(server: T, options: AuthOption
 // requiring the SDK at compile time. Keep the four copies in sync.
 // ---------------------------------------------------------------------------
 
-/** A tool handler as the SDK invokes it: `(params, extra)`. */
+/** A tool handler as the SDK invokes it: `(params, extra)` or `(extra)`. */
 type ToolHandler = (...args: unknown[]) => unknown;
+
+/** The parsed params and the per-request `extra` object of one handler call. */
+interface HandlerCall {
+  params: Record<string, unknown>;
+  extra: Record<string, unknown>;
+}
+
+/**
+ * Split the arguments the SDK passed to a tool handler.
+ *
+ * The arity depends on whether the tool declared an input schema: the SDK calls
+ * `handler(params, extra)` when it did and `handler(extra)` when it did not, so
+ * `extra` is always the LAST argument and params only exist from arity two up.
+ * Reading `extra` only when more than one argument arrived made every
+ * schema-less tool invisible to the credential and header lookups above.
+ */
+function splitHandlerArgs(handlerArgs: unknown[]): HandlerCall {
+  const last = handlerArgs[handlerArgs.length - 1];
+  const first = handlerArgs.length > 1 ? handlerArgs[0] : undefined;
+  return {
+    params: (first && typeof first === "object" ? first : {}) as Record<string, unknown>,
+    extra: (last && typeof last === "object" ? last : {}) as Record<string, unknown>,
+  };
+}
 
 /**
  * Minimal shape of an MCP server that `withAuth` can wrap.
@@ -499,7 +540,45 @@ function patchToolRegistrars(
 
       const toolName = (args.find((a) => typeof a === "string") as string | undefined) ?? "unknown";
       args[handlerIndex] = wrap(args[handlerIndex] as ToolHandler, toolName);
-      return bound(...args);
+      const registered = bound(...args);
+      guardRegisteredHandler(registered, wrap, toolName);
+      return registered;
     };
   }
+}
+
+/**
+ * Keep the middleware in place when a handler is replaced after registration.
+ *
+ * `registerTool` returns a `RegisteredTool`, and its `update({ callback })`
+ * assigns straight to `registeredTool.handler`. Without this guard that call --
+ * or a direct `registered.handler = fn` -- installs an unwrapped handler and
+ * drops the middleware silently, the same bypass as an unpatched `registerTool`.
+ *
+ * A wrapping accessor covers both routes. It delegates to whatever accessor
+ * another `withX` already installed, so composed middleware keeps its order.
+ */
+function guardRegisteredHandler(
+  registered: unknown,
+  wrap: (handler: ToolHandler, toolName: string) => ToolHandler,
+  toolName: string,
+): void {
+  if (!registered || typeof registered !== "object") return;
+
+  const target = registered as Record<string, unknown>;
+  const existing = Object.getOwnPropertyDescriptor(target, "handler");
+  if (!existing || existing.configurable === false) return;
+
+  let own = existing.get ? undefined : existing.value;
+
+  Object.defineProperty(target, "handler", {
+    configurable: true,
+    enumerable: existing.enumerable !== false,
+    get: () => (existing.get ? existing.get.call(target) : own),
+    set: (next: unknown) => {
+      const wrapped = typeof next === "function" ? wrap(next as ToolHandler, toolName) : next;
+      if (existing.set) existing.set.call(target, wrapped);
+      else own = wrapped;
+    },
+  });
 }

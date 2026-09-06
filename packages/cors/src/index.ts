@@ -52,73 +52,81 @@ export class CorsMethodError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
- * Header containers to search, in priority order, given the `extra` object the
- * SDK passes as the last handler argument.
+ * The HTTP request headers the transport captured, which the SDK exposes at
+ * `extra.requestInfo.headers` on the Streamable HTTP and SSE transports. Returns
+ * `undefined` on a transport that has no HTTP request, such as stdio.
  *
- * The SDK does not hand a handler a flat header bag:
- *
- *  - `extra.requestInfo.headers` -- the real HTTP request headers, present on
- *    the Streamable HTTP and SSE transports. This is where a browser's `Origin`
- *    actually arrives.
- *  - `extra._meta` -- the MCP request's `params._meta`.
- *  - `extra.meta` and `extra` itself -- kept so hand-built metadata and the
- *    previous shape keep working.
+ * This is the only origin source accepted. `params._meta` (and the rest of
+ * `extra`) travels inside the JSON-RPC body the caller wrote, so an origin read
+ * from there is only what the caller claims: any client could name an allowed
+ * origin and satisfy the allowlist. Origin is a transport-level fact, so only
+ * the transport's own headers are trusted for it.
  */
-function headerSources(extra: Record<string, unknown>): Record<string, unknown>[] {
-  const sources: Record<string, unknown>[] = [];
-
-  const push = (value: unknown): void => {
-    if (value && typeof value === "object") {
-      sources.push(value as Record<string, unknown>);
-    }
-  };
-
+function transportHeaders(extra: Record<string, unknown>): unknown {
   const requestInfo = extra["requestInfo"];
-  if (requestInfo && typeof requestInfo === "object") {
-    push((requestInfo as Record<string, unknown>)["headers"]);
-  }
-  push(extra["_meta"]);
-  push(extra["meta"]);
-  push(extra);
-
-  return sources;
+  if (!requestInfo || typeof requestInfo !== "object") return undefined;
+  return (requestInfo as Record<string, unknown>)["headers"];
 }
 
-/** Look a header up across every place the SDK might have put it. */
-function extractFromRequest(extra: Record<string, unknown>, key: string): string | undefined {
-  for (const source of headerSources(extra)) {
-    const found = extractFromMeta(source, key);
-    if (found !== undefined) return found;
+/**
+ * Read one header value as a string.
+ *
+ * The SDK types HTTP headers as `Record<string, string | string[] | undefined>`
+ * (`IsomorphicHeaders`), so a header can arrive as an array. A single-element
+ * array is that one value. A repeated header is ambiguous and picking a winner
+ * is how an allowlist gets fooled, so it is treated as absent instead.
+ */
+function asHeaderValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.length === 1 && typeof value[0] === "string") {
+    return value[0];
   }
   return undefined;
 }
 
 /**
- * Extract a value from metadata, doing a case-insensitive key lookup.
+ * Look a key up in one container, case-insensitively, plus a nested `headers`
+ * object if there is one.
  *
- * Real HTTP sends `Origin` capitalised and not every transport lowercases
- * header names before handing metadata over, so a plain `meta["origin"]`
- * lookup misses. Mirrors the helper in `@mcp-toolkit/auth` so header
- * resolution behaves the same across the toolkit.
+ * Real HTTP sends `Origin` capitalised and not every transport lowercases header
+ * names, so a plain `headers["origin"]` lookup misses. Mirrors the helper in
+ * `@mcp-toolkit/auth` so header resolution behaves the same across the toolkit.
  */
-function extractFromMeta(meta: Record<string, unknown>, key: string): string | undefined {
+function lookupHeader(source: unknown, key: string): string | undefined {
+  if (!source || typeof source !== "object") return undefined;
+  const record = source as Record<string, unknown>;
+
   // Direct match
-  if (typeof meta[key] === "string") return meta[key] as string;
+  const direct = asHeaderValue(record[key]);
+  if (direct !== undefined) return direct;
 
   // Case-insensitive search
   const lower = key.toLowerCase();
-  for (const k of Object.keys(meta)) {
-    if (k.toLowerCase() === lower && typeof meta[k] === "string") {
-      return meta[k] as string;
+  for (const k of Object.keys(record)) {
+    if (k.toLowerCase() === lower) {
+      const value = asHeaderValue(record[k]);
+      if (value !== undefined) return value;
     }
   }
 
-  // Look inside nested "headers" object (common transport pattern)
-  const headers = meta["headers"];
-  if (headers && typeof headers === "object") {
-    return extractFromMeta(headers as Record<string, unknown>, key);
-  }
+  // Nested "headers" object (a common hand-built metadata shape)
+  return lookupHeader(record["headers"], key);
+}
 
+/**
+ * Look a key up in the trusted headers first, then in caller-written request
+ * metadata (`extra._meta`, `extra.meta`, `extra` itself).
+ *
+ * Only the method check uses this. An undetectable method fails open, so a value
+ * found in metadata can only tighten the check on the caller that supplied it,
+ * never loosen it. The origin check must not use this -- see `transportHeaders`.
+ */
+function lookupAnywhere(extra: Record<string, unknown>, key: string): string | undefined {
+  const sources: unknown[] = [transportHeaders(extra), extra["_meta"], extra["meta"], extra];
+  for (const source of sources) {
+    const value = lookupHeader(source, key);
+    if (value !== undefined) return value;
+  }
   return undefined;
 }
 
@@ -151,12 +159,14 @@ export function withCors<T extends McpServerLike>(
 
   patchToolRegistrars(server, (originalHandler) => {
     return async function corsHandler(...handlerArgs: unknown[]) {
-      const extra = (handlerArgs.length > 1
-        ? handlerArgs[handlerArgs.length - 1] ?? {}
-        : {}) as Record<string, unknown>;
+      // The SDK passes the per-request "extra" object as the LAST argument, on
+      // its own when the tool declared no input schema.
+      const { extra } = splitHandlerArgs(handlerArgs);
 
       if (allowedSet) {
-        const origin = extractFromRequest(extra, "origin");
+        // Trusted transport headers only: an origin from request metadata is
+        // whatever the caller typed, which would void the allowlist.
+        const origin = lookupHeader(transportHeaders(extra), "origin");
         if (!origin || !allowedSet.has(origin)) {
           throw new CorsError(origin);
         }
@@ -168,7 +178,7 @@ export function withCors<T extends McpServerLike>(
         // `headers` and `url`, and stdio has no HTTP method at all. Fail OPEN
         // when it is undetectable -- rejecting every call is never what a method
         // allowlist is meant to do.
-        const method = extractFromRequest(extra, "method")?.toUpperCase();
+        const method = lookupAnywhere(extra, "method")?.toUpperCase();
         if (method && !allowedMethods.includes(method)) {
           throw new CorsMethodError(method);
         }
@@ -189,8 +199,32 @@ export function withCors<T extends McpServerLike>(
 // requiring the SDK at compile time. Keep the four copies in sync.
 // ---------------------------------------------------------------------------
 
-/** A tool handler as the SDK invokes it: `(params, extra)`. */
+/** A tool handler as the SDK invokes it: `(params, extra)` or `(extra)`. */
 type ToolHandler = (...args: unknown[]) => unknown;
+
+/** The parsed params and the per-request `extra` object of one handler call. */
+interface HandlerCall {
+  params: Record<string, unknown>;
+  extra: Record<string, unknown>;
+}
+
+/**
+ * Split the arguments the SDK passed to a tool handler.
+ *
+ * The arity depends on whether the tool declared an input schema: the SDK calls
+ * `handler(params, extra)` when it did and `handler(extra)` when it did not, so
+ * `extra` is always the LAST argument and params only exist from arity two up.
+ * Reading `extra` only when more than one argument arrived made every
+ * schema-less tool invisible to the credential and header lookups above.
+ */
+function splitHandlerArgs(handlerArgs: unknown[]): HandlerCall {
+  const last = handlerArgs[handlerArgs.length - 1];
+  const first = handlerArgs.length > 1 ? handlerArgs[0] : undefined;
+  return {
+    params: (first && typeof first === "object" ? first : {}) as Record<string, unknown>,
+    extra: (last && typeof last === "object" ? last : {}) as Record<string, unknown>,
+  };
+}
 
 /**
  * Minimal shape of an MCP server that `withCors` can wrap.
@@ -242,8 +276,46 @@ function patchToolRegistrars(
 
       const toolName = (args.find((a) => typeof a === "string") as string | undefined) ?? "unknown";
       args[handlerIndex] = wrap(args[handlerIndex] as ToolHandler, toolName);
-      return bound(...args);
+      const registered = bound(...args);
+      guardRegisteredHandler(registered, wrap, toolName);
+      return registered;
     };
   }
+}
+
+/**
+ * Keep the middleware in place when a handler is replaced after registration.
+ *
+ * `registerTool` returns a `RegisteredTool`, and its `update({ callback })`
+ * assigns straight to `registeredTool.handler`. Without this guard that call --
+ * or a direct `registered.handler = fn` -- installs an unwrapped handler and
+ * drops the middleware silently, the same bypass as an unpatched `registerTool`.
+ *
+ * A wrapping accessor covers both routes. It delegates to whatever accessor
+ * another `withX` already installed, so composed middleware keeps its order.
+ */
+function guardRegisteredHandler(
+  registered: unknown,
+  wrap: (handler: ToolHandler, toolName: string) => ToolHandler,
+  toolName: string,
+): void {
+  if (!registered || typeof registered !== "object") return;
+
+  const target = registered as Record<string, unknown>;
+  const existing = Object.getOwnPropertyDescriptor(target, "handler");
+  if (!existing || existing.configurable === false) return;
+
+  let own = existing.get ? undefined : existing.value;
+
+  Object.defineProperty(target, "handler", {
+    configurable: true,
+    enumerable: existing.enumerable !== false,
+    get: () => (existing.get ? existing.get.call(target) : own),
+    set: (next: unknown) => {
+      const wrapped = typeof next === "function" ? wrap(next as ToolHandler, toolName) : next;
+      if (existing.set) existing.set.call(target, wrapped);
+      else own = wrapped;
+    },
+  });
 }
 

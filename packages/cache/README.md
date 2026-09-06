@@ -47,13 +47,22 @@ withCache(server, {
 ```
 
 The default key generator sorts argument keys, so `{ a: 1, b: 2 }` and `{ b: 2, a: 1 }`
-hit the same entry.
+hit the same entry. A tool registered without an `inputSchema` has no arguments at all,
+so every call to it shares one entry.
 
 ## Per-caller scoping
 
-When `withAuth` ran first it attaches an `AuthContext` at `extra.auth`, and the cache
-key is prefixed with `sub:<caller>`. Without that prefix, an identity-dependent
-response cached for one user would be served to the next.
+When `withAuth` ran first it attaches an `AuthContext` at `extra.auth`, and the cache key
+is prefixed with `sub:<payload.sub>`. Without that prefix, an identity-dependent response
+cached for one caller would be served to the next.
+
+How much that separates depends on the auth strategy, because the prefix is only as
+specific as `payload.sub`:
+
+- `api-key` reports the same `sub` (`"api-key-user"`) for every valid key, so all API key
+  holders land in one namespace and still share entries.
+- `jwt` uses the token's own `sub`, and a `custom` verifier uses whatever `sub` it
+  returns, so those do separate callers.
 
 Apply auth before the cache, never after. The last middleware applied runs innermost, so
 calling `withCache` first puts the cache *outside* auth, where a cache hit returns before

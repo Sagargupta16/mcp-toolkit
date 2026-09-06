@@ -38,7 +38,7 @@ npm run typecheck:examples   # examples/ only; needs a build first
 npm test
 ```
 
-64 tests across the five packages, run by `node --test "dist/**/*.test.js"`. They test against a small fake server object, not a real `McpServer`, so they need neither the SDK nor zod. Tests are compiled from `src/index.test.ts`, so `npm run build` must run first.
+76 tests across the five packages, run by `node --test "dist/**/*.test.js"`. They test against a small fake server object, not a real `McpServer`, so they need neither the SDK nor zod. Tests are compiled from `src/index.test.ts`, so `npm run build` must run first.
 
 ## Entry points
 
@@ -55,7 +55,8 @@ npm test
 
 - `.nvmrc` pins Node 24; `engines` requires >= 20. CI runs 24.
 - Middleware wraps the server via `withAuth(server, ...)` style calls BEFORE tool registration -- README examples are the API contract. Each `withX` patches both `tool()` and `registerTool()`; the LAST one applied runs INNERMOST, so auth must be applied before cache.
-- The `McpServerLike` + `patchToolRegistrars` block at the bottom of auth/cache/cors/rate-limit is duplicated on purpose (no internal package dependency). Change all four together.
+- The shared block at the bottom of auth/cache/cors/rate-limit (`splitHandlerArgs`, `McpServerLike`, `patchToolRegistrars`, `guardRegisteredHandler`) is duplicated on purpose (no internal package dependency) and is byte-identical apart from the `withX` name in one doc comment. Change all four together.
+- `extra` is the LAST handler argument and the ONLY one for a tool with no `inputSchema` -- use `splitHandlerArgs`, never `handlerArgs[0]`. Header extraction is per package and deliberately not shared: auth accepts a credential from `requestInfo.headers` or `params._meta`, cors takes the origin from `requestInfo.headers` only because `_meta` is caller-written.
 - Tool params are Zod raw shapes, never JSON Schema. `examples/` is typechecked by `npm run typecheck:examples` (root `tsconfig.json` still excludes it).
 - README documents features as shipped; verify against `packages/*/src/index.ts` before quoting behavior, status column says Beta for all packages.
 

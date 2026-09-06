@@ -24,8 +24,17 @@ export interface RateLimitInfo {
 /** Callback invoked when a request is rate-limited. */
 export type OnLimitedCallback = (info: RateLimitInfo & { toolName: string }) => void;
 
-/** Function that derives a bucket key from request metadata (for per-user limiting). */
-export type BucketKeyExtractor = (meta: Record<string, unknown>) => string;
+/**
+ * Function that derives a bucket key from the SDK's per-request `extra` object
+ * (for per-caller limiting).
+ *
+ * `extra.requestInfo.headers` holds the real HTTP headers on the Streamable HTTP
+ * and SSE transports; `extra._meta` holds the request's `params._meta`;
+ * `extra.sessionId` is set only by transports that have a session. Anything the
+ * caller can choose is a bucket the caller can rotate, so prefer a value the
+ * transport or `withAuth` established.
+ */
+export type BucketKeyExtractor = (extra: Record<string, unknown>) => string;
 
 // -- Strategy options -------------------------------------------------------
 
@@ -51,8 +60,12 @@ export interface TokenBucketOptions {
    */
   onLimited?: OnLimitedCallback;
   /**
-   * Optional function to derive per-client bucket keys.
-   * When omitted a single global bucket is used.
+   * Optional function to derive per-client bucket keys from the SDK's
+   * per-request `extra` object. When omitted a single global bucket is used.
+   *
+   * A key that resolves to the same string for every caller (for example
+   * `extra.sessionId` under stdio, where no session exists) puts every caller in
+   * one shared bucket.
    */
   bucketKey?: BucketKeyExtractor;
   /**
@@ -324,11 +337,11 @@ export function withRateLimit<T extends McpServerLike>(
       let bucket = globalBucket;
 
       if (bucketKeyExtractor) {
-        const extra = (handlerArgs.length > 1
-          ? handlerArgs[handlerArgs.length - 1]
-          : {}) as Record<string, unknown>;
-        const meta = (extra?.["meta"] ?? extra ?? {}) as Record<string, unknown>;
-        const key = bucketKeyExtractor(meta);
+        // The extractor receives the SDK's per-request `extra` object, which is
+        // the LAST handler argument -- and the only argument when the tool
+        // declared no input schema.
+        const { extra } = splitHandlerArgs(handlerArgs);
+        const key = bucketKeyExtractor(extra);
         bucket = manager.getBucket(key);
       }
 
@@ -356,8 +369,32 @@ export function withRateLimit<T extends McpServerLike>(
 // requiring the SDK at compile time. Keep the four copies in sync.
 // ---------------------------------------------------------------------------
 
-/** A tool handler as the SDK invokes it: `(params, extra)`. */
+/** A tool handler as the SDK invokes it: `(params, extra)` or `(extra)`. */
 type ToolHandler = (...args: unknown[]) => unknown;
+
+/** The parsed params and the per-request `extra` object of one handler call. */
+interface HandlerCall {
+  params: Record<string, unknown>;
+  extra: Record<string, unknown>;
+}
+
+/**
+ * Split the arguments the SDK passed to a tool handler.
+ *
+ * The arity depends on whether the tool declared an input schema: the SDK calls
+ * `handler(params, extra)` when it did and `handler(extra)` when it did not, so
+ * `extra` is always the LAST argument and params only exist from arity two up.
+ * Reading `extra` only when more than one argument arrived made every
+ * schema-less tool invisible to the credential and header lookups above.
+ */
+function splitHandlerArgs(handlerArgs: unknown[]): HandlerCall {
+  const last = handlerArgs[handlerArgs.length - 1];
+  const first = handlerArgs.length > 1 ? handlerArgs[0] : undefined;
+  return {
+    params: (first && typeof first === "object" ? first : {}) as Record<string, unknown>,
+    extra: (last && typeof last === "object" ? last : {}) as Record<string, unknown>,
+  };
+}
 
 /**
  * Minimal shape of an MCP server that `withRateLimit` can wrap.
@@ -409,7 +446,45 @@ function patchToolRegistrars(
 
       const toolName = (args.find((a) => typeof a === "string") as string | undefined) ?? "unknown";
       args[handlerIndex] = wrap(args[handlerIndex] as ToolHandler, toolName);
-      return bound(...args);
+      const registered = bound(...args);
+      guardRegisteredHandler(registered, wrap, toolName);
+      return registered;
     };
   }
+}
+
+/**
+ * Keep the middleware in place when a handler is replaced after registration.
+ *
+ * `registerTool` returns a `RegisteredTool`, and its `update({ callback })`
+ * assigns straight to `registeredTool.handler`. Without this guard that call --
+ * or a direct `registered.handler = fn` -- installs an unwrapped handler and
+ * drops the middleware silently, the same bypass as an unpatched `registerTool`.
+ *
+ * A wrapping accessor covers both routes. It delegates to whatever accessor
+ * another `withX` already installed, so composed middleware keeps its order.
+ */
+function guardRegisteredHandler(
+  registered: unknown,
+  wrap: (handler: ToolHandler, toolName: string) => ToolHandler,
+  toolName: string,
+): void {
+  if (!registered || typeof registered !== "object") return;
+
+  const target = registered as Record<string, unknown>;
+  const existing = Object.getOwnPropertyDescriptor(target, "handler");
+  if (!existing || existing.configurable === false) return;
+
+  let own = existing.get ? undefined : existing.value;
+
+  Object.defineProperty(target, "handler", {
+    configurable: true,
+    enumerable: existing.enumerable !== false,
+    get: () => (existing.get ? existing.get.call(target) : own),
+    set: (next: unknown) => {
+      const wrapped = typeof next === "function" ? wrap(next as ToolHandler, toolName) : next;
+      if (existing.set) existing.set.call(target, wrapped);
+      else own = wrapped;
+    },
+  });
 }

@@ -44,10 +44,17 @@ withCors(server, {
 });
 ```
 
-The origin is read from the real HTTP headers the SDK exposes at
-`extra.requestInfo.headers`, then from `extra._meta`, then from `extra` itself
-(including a nested `headers` object). Lookups are case-insensitive, so the capitalised
-`Origin` that browsers actually send resolves.
+The origin is read only from the real HTTP headers the SDK exposes at
+`extra.requestInfo.headers`. Lookups are case-insensitive, so the capitalised `Origin`
+that browsers actually send resolves, and a header delivered as a single-element array
+resolves too.
+
+Request metadata is deliberately not consulted for the origin. `params._meta` (which the
+SDK surfaces at `extra._meta`) is JSON-RPC body content the caller writes, so an origin
+taken from there is only what the caller claims, and any client could satisfy the
+allowlist by naming an allowed origin. `allowedMethods` is the one check that also looks
+at metadata, and only because an undetectable method fails open: a method found there can
+tighten the check on the caller that supplied it, never loosen it.
 
 ## Caveats
 

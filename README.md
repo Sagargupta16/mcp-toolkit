@@ -85,8 +85,12 @@ server.tool("get-data", "Fetch data with auth + cache + rate limiting", {
   return { content: [{ type: "text", text: JSON.stringify(result) }] };
 });
 
+// The packages compile to CommonJS, so there is no top-level await here.
 const transport = new StdioServerTransport();
-await server.connect(transport);
+server.connect(transport).catch((error) => {
+  logger.error("Failed to start", error as Error);
+  process.exit(1);
+});
 ```
 
 ### Order matters
@@ -111,8 +115,11 @@ withCache(server, { strategy: "lru", ttl: 300 });
 withAuth(server, { type: "api-key", keys: [apiKey] });
 ```
 
-`withCache` scopes entries by the authenticated caller's `sub` when `withAuth`
-ran first, which is exactly the protection the wrong order throws away.
+With auth applied first, `withCache` prefixes each key with the caller's
+`payload.sub`. Note what that is worth per strategy: the built-in `api-key`
+strategy reports the same `sub` (`"api-key-user"`) for every valid key, so all API
+key callers share one cache namespace. Use `jwt` or `custom` auth, which carry a
+real per-caller `sub`, when cached responses differ by caller.
 
 ## Package Details
 
@@ -192,10 +199,12 @@ withCors(server, {
 });
 ```
 
-The origin is read from the real HTTP headers the SDK exposes at
-`extra.requestInfo.headers`, case-insensitively. A request with no origin is blocked
-whenever an allowlist is configured, which is why applying `withCors` to a stdio
-server rejects every call: stdio has no `Origin` to validate.
+The origin is read only from the real HTTP headers the SDK exposes at
+`extra.requestInfo.headers`, case-insensitively. A caller cannot supply it through
+`params._meta`: that is JSON-RPC body content the caller writes, so honouring it would
+let any client name an allowed origin. A request with no origin is blocked whenever an
+allowlist is configured, which is why applying `withCors` to a stdio server rejects
+every call: stdio has no `Origin` to validate.
 
 `allowedMethods` is optional and best-effort. The SDK's `RequestInfo` carries only
 `headers` and `url`, so a tool handler usually cannot see the HTTP method at all; when
@@ -234,11 +243,20 @@ This is beta software. What does not work yet, stated plainly:
 - **Tool registration only.** The middleware patches `server.tool()` and
   `server.registerTool()`. It does not intercept resources, prompts, or completions,
   so those run unauthenticated and unlimited.
+- **Task-based tool handlers are not wrapped.** A handler registered as an object with
+  a `createTask` method (the SDK's task execution shape) is not a function, so the
+  patch forwards it untouched and no middleware runs for that tool.
 - **Credentials come from request metadata, not from a session.** A credential is
   looked up in the HTTP headers at `extra.requestInfo.headers` (Streamable HTTP and
   SSE) or in the MCP request's `params._meta` (the only per-request channel stdio
-  offers). There is no session-level authentication and no integration with the SDK's
-  own OAuth support.
+  offers). `params._meta` is caller-written body content, which is fine for a
+  credential the caller has to present anyway, but it is why the `withCors` origin
+  check ignores it. There is no session-level authentication and no integration with
+  the SDK's own OAuth support.
+- **The `api-key` strategy does not distinguish callers.** Every valid key
+  authenticates as one subject (`"api-key-user"`), so per-caller behaviour that keys
+  off `payload.sub` -- notably cache scoping -- treats all API key holders as one
+  caller. Use `jwt` or `custom` auth for a real per-caller identity.
 - **The JWT verifier is HMAC-only.** `HS256`, `HS384` and `HS512` are verified with
   Node's `crypto`. `RS*`, `ES*` and `PS*` throw; use `type: "custom"` with a real
   library such as [`jose`](https://github.com/panva/jose) for asymmetric algorithms.
@@ -278,7 +296,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 |---------|-------------|
 | [claude-cost-optimizer](https://github.com/Sagargupta16/claude-cost-optimizer) | Save 30-60% on Claude Code costs - proven strategies and benchmarks |
 | [ai-git-hooks](https://github.com/Sagargupta16/ai-git-hooks) | AI-powered git hooks - auto-review diffs, generate commit messages, security scanning |
-| [claude-code-recipes](https://github.com/Sagargupta16/claude-code-recipes) | 47 copy-paste recipes for Claude Code - commands, subagents, hooks, skills, MCP integration |
+| [claude-code-recipes](https://github.com/Sagargupta16/claude-code-recipes) | Copy-paste recipes for Claude Code - commands, subagents, hooks, skills, MCP integration |
 | [agent-recipes](https://github.com/Sagargupta16/agent-recipes) | AI agent workflows for real-world dev tasks - code review, testing, security |
 
 ## License

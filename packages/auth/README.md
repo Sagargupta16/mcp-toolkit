@@ -37,7 +37,7 @@ server.tool("greet", "Greet a user", { name: z.string() }, async ({ name }) => (
 
 An unauthenticated call rejects with `AuthError` before the handler runs. The verified
 context is attached to the handler's `extra.auth` as an `AuthContext`, which is what
-`@mcp-toolkit/cache` uses to scope cache entries per caller.
+`@mcp-toolkit/cache` uses to scope cache entries by `payload.sub`.
 
 ## Options
 
@@ -74,13 +74,22 @@ There is no single header bag on an MCP tool handler, so these are searched in o
    available under the stdio transport.
 3. `extra.meta` and `extra` itself, including a nested `headers` object.
 
-Lookups are case-insensitive, so `Authorization` and `authorization` both resolve.
+`extra` is the last argument the SDK passes a handler, and the only argument when the
+tool declared no `inputSchema`; both shapes are handled.
+
+Lookups are case-insensitive, so `Authorization` and `authorization` both resolve. A
+header delivered as a single-element array resolves too; a repeated header is treated as
+absent rather than resolved to one of its values.
 
 ## Caveats
 
 - **HMAC only.** `HS256`, `HS384`, `HS512` are verified. `RS*`, `ES*`, `PS*` throw an
   `AuthError` pointing at [`jose`](https://github.com/panva/jose); use `type: "custom"`
   for those.
+- **`api-key` does not identify the caller.** Every valid key authenticates as
+  `sub: "api-key-user"` (the payload also carries a `keyPrefix` of the first 8
+  characters), so anything keyed off `payload.sub`, such as cache scoping, cannot tell
+  two API key holders apart. Use `jwt` or `custom` when the caller identity matters.
 - **Tools only.** Resources, prompts, and completions are not intercepted.
 - **No session state.** Every call is verified independently; there is no session
   cache and no integration with the SDK's own OAuth support.

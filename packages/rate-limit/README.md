@@ -47,13 +47,38 @@ withRateLimit(server, {
   maxTokens: 100,          // bucket capacity, default 100
   refillRate: 10,          // tokens per second, default 10
   tokensPerRequest: 1,     // cost per call, default 1
-  bucketKey: (meta) => String(meta.sessionId),  // omit for one global bucket
+  bucketKey: (extra) => String(extra.sessionId), // omit for one global bucket
   maxBuckets: 5000,        // cap on retained per-key buckets, default 5000
   onLimited: (info) => {}, // called on every rejection
 });
 ```
 
 `TokenBucket` is exported if you want the algorithm without the middleware.
+
+## What `bucketKey` receives
+
+`bucketKey` is handed the SDK's per-request `extra` object -- the last handler argument,
+and the only argument when the tool declared no `inputSchema`. The values worth keying on
+live in different places depending on the transport:
+
+```typescript
+// Streamable HTTP or SSE: real HTTP headers.
+bucketKey: (extra) => {
+  const requestInfo = extra["requestInfo"] as { headers: Record<string, string> } | undefined;
+  return String(requestInfo?.headers["x-forwarded-for"] ?? "unknown");
+},
+
+// After withAuth, the verified caller identity.
+bucketKey: (extra) => {
+  const auth = extra["auth"] as { payload?: { sub?: string } } | undefined;
+  return auth?.payload?.sub ?? "anonymous";
+},
+```
+
+Check that the key actually varies per caller. `extra.sessionId` is only set by transports
+that have a session, so under stdio it is `undefined` for everyone and every caller shares
+one `"undefined"` bucket. The `api-key` auth strategy has the same problem: it reports one
+`sub` for all keys.
 
 ## Per-key buckets are bounded
 

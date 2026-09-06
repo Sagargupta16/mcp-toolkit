@@ -38,8 +38,10 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ### Prerequisites
 
-- **Node.js** >= 20.0.0 (24 recommended -- see `.nvmrc`)
-- **npm** >= 10.0.0
+- **Node.js** >= 20.0.0 (the `engines` floor); 24 recommended, which is what `.nvmrc`
+  pins and CI runs
+- **npm** -- the workspace layout and the committed `package-lock.json` assume it; do not
+  swap in another package manager
 - **TypeScript** >= 7.0.0
 
 ### Install Dependencies
@@ -182,7 +184,12 @@ Two things that are easy to get wrong:
   `tool()` as overloads starting with `tool(name: string, ...)`, and parameter
   contravariance makes a narrower signature reject a real `McpServer`.
 - Read request metadata from `extra.requestInfo.headers` and `extra._meta`, not from a
-  key you invented. The SDK does not hand handlers a flat header bag.
+  key you invented. The SDK does not hand handlers a flat header bag. Only
+  `requestInfo.headers` comes from the transport: `_meta` is JSON-RPC body content the
+  caller wrote, so never settle an allowlist on it.
+- Take `extra` from the LAST handler argument, and expect params only from arity two up.
+  A tool registered without an `inputSchema` is invoked as `handler(extra)`, with no
+  params object at all.
 
 ### 5. Add Tests
 
@@ -212,7 +219,9 @@ zod; see any existing package for the pattern.
 
 - Write unit tests for all public API functions
 - Test edge cases (invalid inputs, boundary conditions, error paths)
-- Ensure tests pass on Node.js 24, the version CI runs and `.nvmrc` pins
+- Ensure tests pass on Node.js 24, the version CI runs and `.nvmrc` pins. `engines` still
+  declares `node >= 20`, and nothing in CI exercises that floor, so avoid APIs newer than
+  Node 20 unless you also raise `engines`
 - Tests run against compiled output, so build before testing (`npm run build && npm test`)
 - Run the full test suite before submitting:
   ```bash

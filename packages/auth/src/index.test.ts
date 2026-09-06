@@ -21,12 +21,26 @@ interface FakeServer {
   handlers: Map<string, Handler>;
 }
 
+/** The `RegisteredTool` shape the SDK returns: `update` assigns to `handler`. */
+interface FakeRegisteredTool {
+  name: string;
+  handler: Handler;
+  update: (updates: { callback?: Handler }) => void;
+}
+
 function fakeServer(): FakeServer {
   const handlers = new Map<string, Handler>();
-  const record = (...args: unknown[]): unknown => {
+  const record = (...args: unknown[]): FakeRegisteredTool => {
     const name = args[0] as string;
-    handlers.set(name, args[args.length - 1] as Handler);
-    return { name };
+    const registered: FakeRegisteredTool = {
+      name,
+      handler: args[args.length - 1] as Handler,
+      update: (updates) => {
+        if (updates.callback) registered.handler = updates.callback;
+      },
+    };
+    handlers.set(name, registered.handler);
+    return registered;
   };
   return { handlers, tool: record, registerTool: record };
 }
@@ -106,6 +120,73 @@ test("api key: reads HTTP headers from extra.requestInfo.headers, case-insensiti
     { requestInfo: { headers: { "X-API-Key": "secret-key-1" } } },
   );
   assert.deepEqual(result, OK);
+});
+
+test("api key: a schema-less tool gets its credential from the lone extra argument", async () => {
+  // A tool registered without an inputSchema is invoked as handler(extra): one
+  // argument, no params object. Treating that argument as params left the
+  // credential unreadable and rejected every call.
+  const server = withAuth(fakeServer(), { type: "api-key", keys: ["secret-key-1"] });
+  server.registerTool("t", { description: "d" }, handler);
+
+  const result = await server.handlers.get("t")!({ _meta: { "x-api-key": "secret-key-1" } });
+  assert.deepEqual(result, OK);
+  await assert.rejects(() => Promise.resolve(server.handlers.get("t")!({})), AuthError);
+});
+
+test("api key: a handler swapped in after registration is still guarded", async () => {
+  // registerTool returns a RegisteredTool whose update({ callback }) assigns to
+  // registered.handler, which would otherwise install an unwrapped handler.
+  const server = withAuth(fakeServer(), { type: "api-key", keys: ["secret-key-1"] });
+  const registered = server.registerTool("t", {
+    description: "d",
+    inputSchema: {},
+  }, handler) as FakeRegisteredTool;
+
+  let ran = false;
+  registered.update({
+    callback: () => {
+      ran = true;
+      return OK;
+    },
+  });
+
+  await assert.rejects(() => Promise.resolve(registered.handler({}, {})), AuthError);
+  assert.equal(ran, false, "a replacement handler must not run unauthenticated");
+
+  assert.deepEqual(
+    await registered.handler({}, { _meta: { "x-api-key": "secret-key-1" } }),
+    OK,
+  );
+  assert.equal(ran, true, "the replacement handler runs once authenticated");
+});
+
+test("api key: a header delivered as a single-element array resolves", async () => {
+  // The SDK types headers as Record<string, string | string[] | undefined>.
+  const server = withAuth(fakeServer(), { type: "api-key", keys: ["secret-key-1"] });
+  server.tool("t", "d", {}, handler);
+
+  const result = await server.handlers.get("t")!(
+    {},
+    { requestInfo: { headers: { "x-api-key": ["secret-key-1"] } } },
+  );
+  assert.deepEqual(result, OK);
+});
+
+test("api key: a repeated header is treated as absent rather than picking one", async () => {
+  const server = withAuth(fakeServer(), { type: "api-key", keys: ["secret-key-1"] });
+  server.tool("t", "d", {}, handler);
+
+  await assert.rejects(
+    () =>
+      Promise.resolve(
+        server.handlers.get("t")!(
+          {},
+          { requestInfo: { headers: { "x-api-key": ["secret-key-1", "other"] } } },
+        ),
+      ),
+    (error: unknown) => error instanceof AuthError && /Missing API key/.test((error as Error).message),
+  );
 });
 
 test("api key: an empty key list fails at configuration time", () => {

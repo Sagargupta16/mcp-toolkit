@@ -18,12 +18,26 @@ interface FakeServer {
   handlers: Map<string, Handler>;
 }
 
+/** The `RegisteredTool` shape the SDK returns: `update` assigns to `handler`. */
+interface FakeRegisteredTool {
+  name: string;
+  handler: Handler;
+  update: (updates: { callback?: Handler }) => void;
+}
+
 function fakeServer(): FakeServer {
   const handlers = new Map<string, Handler>();
-  const record = (...args: unknown[]): unknown => {
+  const record = (...args: unknown[]): FakeRegisteredTool => {
     const name = args[0] as string;
-    handlers.set(name, args[args.length - 1] as Handler);
-    return { name };
+    const registered: FakeRegisteredTool = {
+      name,
+      handler: args[args.length - 1] as Handler,
+      update: (updates) => {
+        if (updates.callback) registered.handler = updates.callback;
+      },
+    };
+    handlers.set(name, registered.handler);
+    return registered;
   };
   return { handlers, tool: record, registerTool: record };
 }
@@ -149,7 +163,7 @@ test("withRateLimit: per-key buckets are isolated", async () => {
     strategy: "token-bucket",
     maxTokens: 1,
     refillRate: 0.001,
-    bucketKey: (meta) => String(meta["client"]),
+    bucketKey: (extra) => String(extra["client"]),
   });
   server.tool("t", "d", {}, () => OK);
 
@@ -173,13 +187,57 @@ test("withRateLimit: tools registered via registerTool are limited too", async (
   await assert.rejects(() => Promise.resolve(server.handlers.get("t")!({}, {})), RateLimitError);
 });
 
+test("withRateLimit: a schema-less tool is limited from its lone extra argument", async () => {
+  // A tool registered without an inputSchema is invoked as handler(extra): one
+  // argument, no params object. The extractor used to receive an empty object.
+  const seen: string[] = [];
+  const server = withRateLimit(fakeServer(), {
+    strategy: "token-bucket",
+    maxTokens: 1,
+    refillRate: 0.001,
+    bucketKey: (extra) => {
+      const requestInfo = extra["requestInfo"] as { headers: Record<string, string> } | undefined;
+      const key = String(requestInfo?.headers["x-forwarded-for"]);
+      seen.push(key);
+      return key;
+    },
+  });
+  server.registerTool("t", { description: "d" }, () => OK);
+
+  const call = (ip: string): unknown =>
+    server.handlers.get("t")!({ requestInfo: { headers: { "x-forwarded-for": ip } } });
+
+  assert.deepEqual(await call("1.2.3.4"), OK);
+  await assert.rejects(() => Promise.resolve(call("1.2.3.4")), RateLimitError);
+  // A different caller has its own bucket, so the HTTP header really keyed it.
+  assert.deepEqual(await call("5.6.7.8"), OK);
+  assert.deepEqual(seen, ["1.2.3.4", "1.2.3.4", "5.6.7.8"]);
+});
+
+test("withRateLimit: a handler swapped in after registration is still limited", async () => {
+  const server = withRateLimit(fakeServer(), {
+    strategy: "token-bucket",
+    maxTokens: 1,
+    refillRate: 0.001,
+  });
+  const registered = server.registerTool("t", {
+    description: "d",
+    inputSchema: {},
+  }, () => OK) as FakeRegisteredTool;
+
+  registered.update({ callback: () => OK });
+
+  assert.deepEqual(await registered.handler({}, {}), OK);
+  await assert.rejects(() => Promise.resolve(registered.handler({}, {})), RateLimitError);
+});
+
 test("withRateLimit: the per-key bucket map is bounded by maxBuckets", async () => {
   const server = withRateLimit(fakeServer(), {
     strategy: "token-bucket",
     maxTokens: 10,
     refillRate: 0.001, // long refill window, so idle eviction cannot fire
     maxBuckets: 3,
-    bucketKey: (meta) => String(meta["client"]),
+    bucketKey: (extra) => String(extra["client"]),
   });
   server.tool("t", "d", {}, () => OK);
 
@@ -195,7 +253,7 @@ test("withRateLimit: idle buckets are dropped after a full refill window", async
     strategy: "token-bucket",
     maxTokens: 1,
     refillRate: 100, // full refill window is 10ms
-    bucketKey: (meta) => String(meta["client"]),
+    bucketKey: (extra) => String(extra["client"]),
   });
   server.tool("t", "d", {}, () => OK);
 
