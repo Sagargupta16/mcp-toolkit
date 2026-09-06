@@ -21,6 +21,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 import { withAuth } from "@mcp-toolkit/auth";
 import { withCache, getCache } from "@mcp-toolkit/cache";
 import { withRateLimit } from "@mcp-toolkit/rate-limit";
@@ -54,7 +55,9 @@ const CONFIG = {
 // Logger setup
 // ---------------------------------------------------------------------------
 
-const transports: Transport[] = ["stdout"];
+// stderr, never stdout: this server speaks MCP over stdio, and the spec forbids
+// writing anything to stdout that is not a valid MCP message.
+const transports: Transport[] = ["stderr"];
 if (CONFIG.logFile) {
   transports.push({ type: "file", path: CONFIG.logFile });
 }
@@ -161,9 +164,14 @@ async function main(): Promise<void> {
   // -----------------------------------------------------------------------
   // Middleware stack (order matters!)
   //
-  // 1. Auth runs first — reject unauthenticated requests immediately
-  // 2. Rate limiting runs second — prevent abuse before doing real work
-  // 3. Cache runs last — serve cached responses to avoid redundant computation
+  // Each with* wraps the registration methods, so the LAST middleware applied
+  // is the INNERMOST one at call time:
+  //
+  // 1. Auth runs first -- reject unauthenticated requests immediately
+  // 2. Rate limiting runs second -- prevent abuse before doing real work
+  // 3. Cache runs last -- serve cached responses to avoid redundant computation
+  //
+  // Applying cache BEFORE auth would serve cache hits to unauthenticated callers.
   // -----------------------------------------------------------------------
 
   logger.info("Applying middleware stack");
@@ -212,9 +220,9 @@ async function main(): Promise<void> {
     "get-weather",
     "Get current weather for a city (cached for 2 minutes)",
     {
-      city: { type: "string", description: "City name (e.g. 'London', 'Tokyo')" },
+      city: z.string().describe("City name (e.g. 'London', 'Tokyo')"),
     },
-    async ({ city }: { city: string }) => {
+    async ({ city }) => {
       logger.info("Tool invoked: get-weather", { city });
 
       const weather = await fetchWeather(city);
@@ -248,9 +256,9 @@ async function main(): Promise<void> {
     "get-stock-price",
     "Get the current stock price for a ticker symbol (cached for 2 minutes)",
     {
-      symbol: { type: "string", description: "Stock ticker symbol (e.g. 'AAPL', 'GOOGL')" },
+      symbol: z.string().describe("Stock ticker symbol (e.g. 'AAPL', 'GOOGL')"),
     },
-    async ({ symbol }: { symbol: string }) => {
+    async ({ symbol }) => {
       logger.info("Tool invoked: get-stock-price", { symbol });
 
       const stock = await fetchStockPrice(symbol);
@@ -283,9 +291,9 @@ async function main(): Promise<void> {
     "get-user-profile",
     "Look up a user profile by ID",
     {
-      userId: { type: "string", description: "User ID to look up" },
+      userId: z.string().describe("User ID to look up"),
     },
-    async ({ userId }: { userId: string }) => {
+    async ({ userId }) => {
       logger.info("Tool invoked: get-user-profile", { userId });
 
       const profile = await fetchUserProfile(userId);
@@ -302,7 +310,7 @@ async function main(): Promise<void> {
   );
 
   // -----------------------------------------------------------------------
-  // Tool: server-status (no external call — shows middleware stats)
+  // Tool: server-status (no external call -- shows middleware stats)
   // -----------------------------------------------------------------------
   server.tool(
     "server-status",

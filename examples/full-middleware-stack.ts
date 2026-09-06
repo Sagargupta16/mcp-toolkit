@@ -8,11 +8,14 @@
  *   npx tsx examples/full-middleware-stack.ts
  *
  * Environment variables:
- *   MCP_API_KEY - A valid API key for authenticating requests
+ *   MCP_API_KEY          - A valid API key for authenticating requests
+ *   MCP_ALLOWED_ORIGINS  - Comma-separated origin allowlist. Only meaningful on
+ *                          an HTTP/SSE transport; leave unset for stdio.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 import { withAuth } from "@mcp-toolkit/auth";
 import { withCache } from "@mcp-toolkit/cache";
 import { withRateLimit } from "@mcp-toolkit/rate-limit";
@@ -31,14 +34,22 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// Compose middleware. Each `with*` wraps `server.tool` so tools registered
-// afterwards run through the whole stack.
+// Compose middleware. Each `with*` wraps the registration methods, so tools
+// registered afterwards run through the whole stack -- and the LAST middleware
+// applied is the INNERMOST one at call time. Apply auth before cache, never
+// after, or a cache hit is served without authenticating the caller.
 
-// 1. CORS (for HTTP/SSE transport) - validate request origins
-withCors(server, {
-  allowedOrigins: ["https://claude.ai"],
-  allowedMethods: ["GET", "POST"],
-});
+// 1. CORS (HTTP/SSE transport only) - validate request origins.
+// Under stdio there is no Origin header to inspect, so an allowlist would reject
+// every call. Apply it only when origins have actually been configured.
+const allowedOrigins = process.env["MCP_ALLOWED_ORIGINS"]
+  ?.split(",")
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
+if (allowedOrigins && allowedOrigins.length > 0) {
+  withCors(server, { allowedOrigins });
+}
 
 // 2. Authentication
 withAuth(server, {
@@ -66,9 +77,9 @@ server.tool(
   "get-data",
   "Fetch data with auth + cache + rate limiting",
   {
-    query: { type: "string", description: "Search query" },
+    query: z.string().describe("Search query"),
   },
-  async ({ query }: { query: string }) => {
+  async ({ query }) => {
     // This result will be cached for 5 minutes
     logger.info("Fetching data", { query });
     const data = await fetchExpensiveData(query);

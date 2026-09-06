@@ -12,11 +12,11 @@
 
 Public monorepo of reusable middleware packages (`@mcp-toolkit/*`) for building production MCP servers with the TypeScript SDK: auth, cache, rate-limit, logger, cors.
 
-Pre-release (v0.1.0). Not yet published to npm -- users clone and build from source.
+Beta (v0.2.0). Not yet published to npm -- users clone and build from source.
 
 ## Stack
 
-- **Language**: TypeScript 5 (compiles to CommonJS -- no `"type": "module"`, tsconfig `module: Node16`), Node >= 20
+- **Language**: TypeScript 7 (compiles to CommonJS -- no `"type": "module"`, tsconfig `module: Node16`), Node >= 20
 - **Framework**: none -- plain library packages; peer dep `@modelcontextprotocol/sdk >= 1.0`
 - **Database**: none
 - **Package manager**: npm workspaces (see Repo-specific rules)
@@ -27,8 +27,9 @@ Pre-release (v0.1.0). Not yet published to npm -- users clone and build from sou
 ```
 npm install
 npm run build        # tsc across all workspaces
-npm run typecheck    # root tsc --noEmit
+npm run typecheck    # root tsc --noEmit (excludes examples/)
 npm run lint         # per-package tsc --noEmit (no ESLint/Biome)
+npm run typecheck:examples   # examples/ only; needs a build first
 ```
 
 ## Test
@@ -37,24 +38,25 @@ npm run lint         # per-package tsc --noEmit (no ESLint/Biome)
 npm test
 ```
 
-No test suite yet -- per-package `test` script looks for compiled `dist/**/*.test.js` via `node --test` and prints "No tests found, skipping". Tests must be compiled first (`npm run build`).
+64 tests across the five packages, run by `node --test "dist/**/*.test.js"`. They test against a small fake server object, not a real `McpServer`, so they need neither the SDK nor zod. Tests are compiled from `src/index.test.ts`, so `npm run build` must run first.
 
 ## Entry points
 
-- `packages/<name>/src/index.ts` -- each package is a single-file module (auth, cache, cors, logger, rate-limit)
+- `packages/<name>/src/index.ts` -- each package is a single-file module (auth, cache, cors, logger, rate-limit), with tests alongside in `index.test.ts`
 - `examples/*.ts` -- runnable usage examples (basic-auth-server, full-middleware-stack, production-server)
 
 ## Key files
 
 - `package.json` (root) -- workspace definition and all shared scripts
-- `packages/<name>/package.json` -- per-package metadata; keep versions in lockstep (all 0.1.0)
-- `.github/workflows/ci.yml` -- delegates to `Sagargupta16/shared-workflows` (node-ci + security-scan)
+- `packages/<name>/package.json` -- per-package metadata; keep versions in lockstep with the root (all 0.2.0)
+- `.github/workflows/ci.yml` -- delegates to `Sagargupta16/shared-workflows` (node-ci with `run-typecheck: true` on Node 24 + security-scan), plus a local `examples` job that builds and typechecks `examples/`
 
 ## Gotchas
 
-- `.nvmrc` pins Node 19 but `engines` requires >= 20 -- the engines field wins; `.nvmrc` is stale.
-- A stray `.python-version` (3.14) exists in this TS-only repo; ignore it.
-- Middleware wraps the server via `withAuth(server, ...)` style calls BEFORE tool registration -- README examples are the API contract.
+- `.nvmrc` pins Node 24; `engines` requires >= 20. CI runs 24.
+- Middleware wraps the server via `withAuth(server, ...)` style calls BEFORE tool registration -- README examples are the API contract. Each `withX` patches both `tool()` and `registerTool()`; the LAST one applied runs INNERMOST, so auth must be applied before cache.
+- The `McpServerLike` + `patchToolRegistrars` block at the bottom of auth/cache/cors/rate-limit is duplicated on purpose (no internal package dependency). Change all four together.
+- Tool params are Zod raw shapes, never JSON Schema. `examples/` is typechecked by `npm run typecheck:examples` (root `tsconfig.json` still excludes it).
 - README documents features as shipped; verify against `packages/*/src/index.ts` before quoting behavior, status column says Beta for all packages.
 
 ## Repo-specific rules
