@@ -1,17 +1,19 @@
 {
   "name": "@mcp-toolkit/auth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Authentication middleware for MCP servers - API key, JWT, and custom strategies",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "test -n \"$(find dist -name \"*.test.js\" 2>/dev/null)\" && node --test dist/**/*.test.js || echo \"No tests found, skipping\""
+    "test": "node --test \"dist/**/*.test.js\""
   },
   "keywords": [
     "mcp",
