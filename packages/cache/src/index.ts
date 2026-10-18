@@ -38,6 +38,21 @@ export interface CacheStats {
 /** Function used to derive a cache key from a tool name and its arguments. */
 export type KeyGenerator = (toolName: string, args: Record<string, unknown>) => string;
 
+/**
+ * Where `withCache` keeps its entries.
+ *
+ * The default is an in-process {@link LRUCache}. Either method may return a
+ * promise, so a store shared by every replica (Redis, Valkey) fits behind the
+ * same interface; see {@link redisCacheStore}. A store error propagates to the
+ * caller as a failed tool call.
+ */
+export interface CacheStore {
+  /** Return the stored value, or `undefined` on a miss or an expired entry. */
+  get(key: string): unknown | Promise<unknown>;
+  /** Store `value` under `key` for `ttlSeconds` (`0` means no expiry). */
+  set(key: string, value: unknown, ttlSeconds: number): void | Promise<void>;
+}
+
 // -- Strategy options -------------------------------------------------------
 
 export interface LruCacheOptions {
@@ -58,6 +73,11 @@ export interface LruCacheOptions {
    * @default `(name, args) => \`${name}:${JSON.stringify(args)}\``
    */
   keyGenerator?: KeyGenerator;
+  /**
+   * Store to use instead of the in-process LRU cache. The store owns eviction,
+   * so `maxSize` is ignored when this is set; `ttl` is passed to every `set`.
+   */
+  store?: CacheStore;
 }
 
 export interface TtlCacheOptions {
@@ -76,6 +96,11 @@ export interface TtlCacheOptions {
    * Custom key generator function.
    */
   keyGenerator?: KeyGenerator;
+  /**
+   * Store to use instead of the in-process LRU cache. The store owns eviction,
+   * so `maxSize` is ignored when this is set; `ttl` is passed to every `set`.
+   */
+  store?: CacheStore;
 }
 
 export type CacheOptions = LruCacheOptions | TtlCacheOptions;
@@ -291,10 +316,15 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
   // Both `"lru"` and `"ttl"` are served by one LRU-with-TTL cache: entries leave
   // when they exceed `ttl` OR when `maxSize` is reached, whichever comes first.
   // The strategy field does not currently change eviction behaviour.
-  const cache = new LRUCache<unknown>(maxSize, ttl);
-
-  // Expose cache instance on the server for inspection / manual invalidation
-  (server as unknown as Record<string, unknown>)["__cache"] = cache;
+  let store: CacheStore;
+  if (options.store) {
+    store = options.store;
+  } else {
+    const cache = new LRUCache<unknown>(maxSize, ttl);
+    store = cache;
+    // Expose cache instance on the server for inspection / manual invalidation
+    (server as unknown as Record<string, unknown>)["__cache"] = cache;
+  }
 
   patchToolRegistrars(server, (originalHandler, toolName) => {
     return async function cachedHandler(...handlerArgs: unknown[]) {
@@ -317,7 +347,7 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
         cacheKey = `sub:${subject}|${cacheKey}`;
       }
 
-      const cached = cache.get(cacheKey);
+      const cached = await store.get(cacheKey);
       if (cached !== undefined) {
         return cached;
       }
@@ -326,7 +356,7 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
       // A tool reports failure as a result with `isError: true`, not a throw.
       // Caching it would replay a transient failure until the TTL ran out.
       if (!isErrorResult(result)) {
-        cache.set(cacheKey, result);
+        await store.set(cacheKey, result, ttl);
       }
       return result;
     };
@@ -335,9 +365,71 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
   return server;
 }
 
+// ---------------------------------------------------------------------------
+// Redis / Valkey store
+// ---------------------------------------------------------------------------
+
+/**
+ * Sends one command to Redis and resolves with its reply.
+ *
+ * Taking a function instead of a client keeps this package free of runtime
+ * dependencies and works with any client:
+ *
+ * - node-redis: `(args) => client.sendCommand(args)`
+ * - ioredis: `(args) => client.call(args[0]!, ...args.slice(1))`
+ */
+export type RedisCommand = (args: string[]) => Promise<unknown>;
+
+export interface RedisCacheStoreOptions {
+  /**
+   * Prefix added to every key, so several servers can share one database.
+   * @default "mcp-toolkit:cache:"
+   */
+  prefix?: string;
+}
+
+/**
+ * A {@link CacheStore} on Redis or Valkey, shared by every process that points
+ * at the same database.
+ *
+ * Values are stored as JSON with `SET key value PX ttl`, so Redis expires them
+ * and the cache survives restarts. Eviction beyond the TTL follows the server's
+ * `maxmemory-policy`; `maxSize` does not apply.
+ *
+ * @example
+ * ```ts
+ * import { createClient } from "redis";
+ * const client = await createClient({ url: process.env.REDIS_URL }).connect();
+ * withCache(server, {
+ *   strategy: "ttl",
+ *   ttl: 300,
+ *   store: redisCacheStore((args) => client.sendCommand(args)),
+ * });
+ * ```
+ */
+export function redisCacheStore(
+  command: RedisCommand,
+  options: RedisCacheStoreOptions = {},
+): CacheStore {
+  const prefix = options.prefix ?? "mcp-toolkit:cache:";
+  return {
+    async get(key) {
+      const raw = await command(["GET", prefix + key]);
+      if (raw === null || raw === undefined) return undefined;
+      return JSON.parse(typeof raw === "string" ? raw : String(raw));
+    },
+    async set(key, value, ttlSeconds) {
+      const args = ["SET", prefix + key, JSON.stringify(value)];
+      if (ttlSeconds > 0) args.push("PX", String(Math.ceil(ttlSeconds * 1000)));
+      await command(args);
+    },
+  };
+}
+
 /**
  * Retrieve the underlying LRU cache instance attached by `withCache`.
- * Useful for manual invalidation or gathering statistics.
+ * Useful for manual invalidation or gathering statistics. Returns `undefined`
+ * when `withCache` was given a custom `store`.
  */
 export function getCache<T = unknown>(server: McpServerLike): LRUCache<T> | undefined {
   return (server as unknown as Record<string, unknown>)["__cache"] as LRUCache<T> | undefined;

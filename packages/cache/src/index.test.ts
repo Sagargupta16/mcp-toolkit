@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { getCache, LRUCache, withCache } from "./index.js";
+import { getCache, LRUCache, redisCacheStore, withCache } from "./index.js";
 
 type Handler = (...args: unknown[]) => unknown;
 
@@ -276,4 +276,71 @@ test("withCache: a custom keyGenerator is used", async () => {
   await server.handlers.get("get")!({ q: "different" }, {});
 
   assert.equal(calls, 1, "the custom key ignores args, so this is a cache hit");
+});
+
+// ---------------------------------------------------------------------------
+// Pluggable store
+// ---------------------------------------------------------------------------
+
+test("withCache: a custom async store is read and written with the ttl", async () => {
+  const data = new Map<string, unknown>();
+  const ttls: number[] = [];
+  const server = withCache(fakeServer(), {
+    strategy: "ttl",
+    ttl: 42,
+    store: {
+      get: async (key) => data.get(key),
+      set: async (key, value, ttlSeconds) => {
+        data.set(key, value);
+        ttls.push(ttlSeconds);
+      },
+    },
+  });
+  let calls = 0;
+  server.tool("get", "d", {}, () => {
+    calls += 1;
+    return { calls };
+  });
+
+  await server.handlers.get("get")!({ q: "x" }, { auth: { payload: { sub: "alice" } } });
+  const second = await server.handlers.get("get")!({ q: "x" }, { auth: { payload: { sub: "alice" } } });
+
+  assert.equal(calls, 1, "the second call is served from the custom store");
+  assert.deepEqual(second, { calls: 1 });
+  assert.deepEqual([...data.keys()], ['sub:alice|get:{"q":"x"}']);
+  assert.deepEqual(ttls, [42]);
+  assert.equal(getCache(server), undefined, "no in-memory cache is created with a store");
+});
+
+test("withCache: an isError result is not written to a custom store", async () => {
+  let writes = 0;
+  const server = withCache(fakeServer(), {
+    strategy: "ttl",
+    store: { get: () => undefined, set: () => void writes++ },
+  });
+  server.tool("get", "d", {}, () => ({ isError: true, content: [] }));
+
+  await server.handlers.get("get")!({}, {});
+  assert.equal(writes, 0);
+});
+
+test("redisCacheStore: GET and SET PX with a prefix, JSON round trip", async () => {
+  const sent: string[][] = [];
+  const db = new Map<string, string>();
+  const store = redisCacheStore(
+    async (args) => {
+      sent.push(args);
+      if (args[0] === "SET") db.set(args[1]!, args[2]!);
+      return args[0] === "GET" ? (db.get(args[1]!) ?? null) : "OK";
+    },
+    { prefix: "p:" },
+  );
+
+  assert.equal(await store.get("k"), undefined, "a null reply is a miss");
+  await store.set("k", { content: [{ type: "text", text: "hi" }] }, 1.5);
+  assert.deepEqual(await store.get("k"), { content: [{ type: "text", text: "hi" }] });
+  await store.set("forever", 1, 0);
+
+  assert.deepEqual(sent[1], ["SET", "p:k", '{"content":[{"type":"text","text":"hi"}]}', "PX", "1500"]);
+  assert.deepEqual(sent[3], ["SET", "p:forever", "1"], "ttl 0 sets no expiry");
 });

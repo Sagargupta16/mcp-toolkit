@@ -1,6 +1,7 @@
 # @mcp-toolkit/cache
 
-Response caching middleware for MCP servers. In-memory LRU with TTL.
+Response caching middleware for MCP servers. In-memory LRU with TTL, or a shared Redis /
+Valkey store.
 
 Part of [mcp-toolkit](https://github.com/Sagargupta16/mcp-toolkit). Beta.
 
@@ -47,12 +48,47 @@ withCache(server, {
   ttl: 300,              // seconds, default 300. 0 disables expiry
   maxSize: 1000,         // max entries, default 1000
   keyGenerator: (toolName, args) => `${toolName}:${JSON.stringify(args)}`,
+  store: undefined,      // a CacheStore; default is the in-process LRU
 });
 ```
 
 The default key generator sorts argument keys, so `{ a: 1, b: 2 }` and `{ b: 2, a: 1 }`
 hit the same entry. A tool registered without an `inputSchema` has no arguments at all,
 so every call to it shares one entry.
+
+## Sharing the cache across replicas
+
+The default cache lives in one Node process. Pass a `store` to keep entries somewhere
+every replica can reach. `redisCacheStore` is built in and works with Redis 5+ and
+Valkey:
+
+```typescript
+import { createClient } from "redis";
+import { withCache, redisCacheStore } from "@mcp-toolkit/cache";
+
+const redis = await createClient({ url: process.env.REDIS_URL }).connect();
+
+withCache(server, {
+  strategy: "ttl",
+  ttl: 300,
+  store: redisCacheStore((args) => redis.sendCommand(args), { prefix: "my-server:" }),
+});
+```
+
+It takes a function that sends one command, not a client, so the package still has no
+runtime dependencies and any client fits. With ioredis that function is
+`(args) => redis.call(args[0]!, ...args.slice(1))`.
+
+- Values are stored as JSON with `SET key value PX <ttl>`, so Redis does the expiry and
+  `ttl: 0` means no expiry. `maxSize` does not apply; eviction beyond the TTL follows the
+  server's `maxmemory-policy`.
+- Keys are `<prefix><key>`, prefix default `mcp-toolkit:cache:`.
+- A Redis error fails the tool call. Wrap the store if you would rather fall through to
+  the handler.
+- `getCache(server)` returns `undefined` when a store is passed.
+
+Any object with `get(key)` and `set(key, value, ttlSeconds)` is a `CacheStore`; either
+method may return a promise.
 
 ## Per-caller scoping
 
@@ -77,7 +113,8 @@ authentication happens at all.
 - **`strategy` does not change eviction.** `"lru"` and `"ttl"` both use one
   LRU-with-TTL cache: an entry leaves when it exceeds `ttl` or when `maxSize` is
   reached, whichever comes first.
-- **In-process memory only.** Nothing is shared across workers, replicas, or restarts.
+- **In-process memory by default.** Without a `store`, nothing is shared across workers,
+  replicas, or restarts.
 - **Errors are not cached.** A handler that throws is not stored, and neither is a
   result with `isError: true` (how MCP tools report failure), so the next call re-runs
   the handler instead of replaying the failure for the whole TTL.
