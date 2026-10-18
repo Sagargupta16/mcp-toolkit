@@ -1,6 +1,6 @@
 {
   "name": "@mcp-toolkit/cors",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Origin validation middleware for MCP servers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,6 +25,10 @@
   ],
   "author": "Sagar Gupta",
   "license": "MIT",
+  "homepage": "https://github.com/Sagargupta16/mcp-toolkit/tree/main/packages/cors#readme",
+  "bugs": {
+    "url": "https://github.com/Sagargupta16/mcp-toolkit/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Sagargupta16/mcp-toolkit.git",
@@ -32,5 +36,11 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": ">=1.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

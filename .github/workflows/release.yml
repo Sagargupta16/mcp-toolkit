@@ -1,0 +1,58 @@
+name: Release
+# Publishes all five @mcp-toolkit/* packages to npm with GitHub OIDC trusted
+# publishing: no npm token is stored anywhere, and npm attaches a provenance
+# statement linking each tarball to this workflow run. Each package must have
+# this repo and workflow registered as its trusted publisher on npmjs.com first.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Build, test and pack without publishing"
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The OIDC token npm exchanges for a short-lived publish credential.
+      id-token: write
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - name: Check versions, changelog and tag
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            node scripts/check-release.mjs "$GITHUB_REF_NAME"
+          else
+            node scripts/check-release.mjs
+          fi
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:e2e
+        env:
+          REDIS_URL: redis://localhost:6379
+      - run: npm pack --workspaces --dry-run
+      - name: Publish
+        if: github.event_name == 'push' || !inputs.dry-run
+        run: npm publish --workspaces --access public --provenance
