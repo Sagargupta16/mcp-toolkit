@@ -51,12 +51,16 @@ Transports are `"stdout"`, `"stderr"`, or `{ type: "file", path: "./app.log" }`,
 can pass several. A file transport creates parent directories and falls back to stderr
 if the write fails. `nullLogger` is exported for tests.
 
+`timestamp`, `level` and `message` always come from the call itself. A key with one of
+those names in `data` or `defaultMeta` is ignored, so caller data cannot relabel an
+`info` line as an `error` one.
+
 ## Do not log to stdout on a stdio server
 
 The default is `stderr` on purpose. Per the
-[MCP transports spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports),
-a stdio server "MUST NOT write anything to its `stdout` that is not a valid MCP
-message", and "MAY write UTF-8 strings to its standard error (`stderr`) for logging
+[MCP stdio transport spec](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio)
+(2026-07-28 revision), a stdio server "MUST NOT write anything to its `stdout` that is
+not a valid MCP message", and "MAY write UTF-8 strings to `stderr` for any logging
 purposes". A JSON log line on stdout is interleaved into the JSON-RPC stream and
 corrupts the session. Only choose `"stdout"` when the server does not speak MCP over
 stdio.

@@ -31,9 +31,11 @@ withRateLimit(server, {
   onLimited: (info) => console.error("rate limited", info.toolName, info.retryAfter),
 });
 
-server.tool("get-data", "Fetch data", { query: z.string() }, async ({ query }) => ({
-  content: [{ type: "text" as const, text: query }],
-}));
+server.registerTool(
+  "get-data",
+  { description: "Fetch data", inputSchema: { query: z.string() } },
+  async ({ query }) => ({ content: [{ type: "text" as const, text: query }] }),
+);
 ```
 
 When the bucket is empty the call rejects with `RateLimitError`, whose `retryAfter`

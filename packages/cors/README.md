@@ -26,9 +26,11 @@ const server = new McpServer({ name: "demo", version: "1.0.0" });
 
 withCors(server, { allowedOrigins: ["https://claude.ai"] });
 
-server.tool("get-data", "Fetch data", { query: z.string() }, async ({ query }) => ({
-  content: [{ type: "text" as const, text: query }],
-}));
+server.registerTool(
+  "get-data",
+  { description: "Fetch data", inputSchema: { query: z.string() } },
+  async ({ query }) => ({ content: [{ type: "text" as const, text: query }] }),
+);
 ```
 
 A call whose origin is missing or not in the list rejects with `CorsError`. The MCP
