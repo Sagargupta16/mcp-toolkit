@@ -21,9 +21,9 @@ Stop reimplementing auth, caching, rate limiting, CORS, and logging for every MC
   limit stays exact under concurrency.
 - **Tested.** 85 unit tests (`node --test`, no test framework) cover every package,
   including the ordering, header-lookup and bypass cases listed under
-  [Limitations](#limitations-and-compatibility). 10 end-to-end tests drive a real
+  [Limitations](#limitations-and-compatibility). 6 end-to-end tests drive a real
   `McpServer` from a real SDK `Client`, over the in-memory transport and over
-  Streamable HTTP, and run the Redis stores against Redis 8 and Valkey 9 in CI.
+  Streamable HTTP, and 4 more run the Redis stores against Redis 8 and Valkey 9 in CI.
 - **Measured.** The full stack (cors, api-key auth, rate limit, cache) added 3.6 to 5.8
   microseconds per tool call across four benchmark runs on a laptop; see
   [Performance](#performance).

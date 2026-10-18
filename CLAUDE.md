@@ -12,7 +12,7 @@
 
 Public monorepo of reusable middleware packages (`@mcp-toolkit/*`) for building production MCP servers with the TypeScript SDK: auth, cache, rate-limit, logger, cors.
 
-Beta (v0.3.0). Not yet published to npm -- users clone and build from source. `.github/workflows/release.yml` publishes on a `v*` tag via OIDC trusted publishing once each package has its trusted publisher set on npmjs.com.
+Beta (v0.3.0). Not yet published to npm -- users clone and build from source. The `@mcp-toolkit` npm scope is an existing npm org Sagar is not a member of (`npm team ls mcp-toolkit` returns 403), so publishing under these names fails; the scope (join the org or rename, e.g. `@sagargupta1610/*`) must be settled before any release workflow is added.
 
 ## Stack
 
@@ -20,7 +20,7 @@ Beta (v0.3.0). Not yet published to npm -- users clone and build from source. `.
 - **Framework**: none -- plain library packages; peer dep `@modelcontextprotocol/sdk >= 1.0`
 - **Database**: none
 - **Package manager**: npm workspaces (see Repo-specific rules)
-- **Deploy target**: npm (pending first publish) via `release.yml`; CI via shared reusable workflows
+- **Deploy target**: none yet -- npm publish blocked on the scope (see above); CI via shared reusable workflows
 
 ## Run
 
@@ -58,8 +58,6 @@ npm run test:e2e     # test/*.test.ts: 10 tests, real McpServer + Client; needs 
 - `package.json` (root) -- workspace definition and all shared scripts
 - `packages/<name>/package.json` -- per-package metadata; keep versions in lockstep with the root (all 0.3.0); `scripts/check-release.mjs` enforces it
 - `.github/workflows/ci.yml` -- delegates to `Sagargupta16/shared-workflows` (node-ci with `run-typecheck: true` on Node 24 + security-scan), plus a local `examples` job that builds and typechecks `examples/`, and an `e2e` job (Redis and Valkey service matrix)
-- `.github/workflows/release.yml` -- tag-triggered npm publish with `id-token: write`; `workflow_dispatch` defaults to a dry run
-
 ## Gotchas
 
 - `.nvmrc` pins Node 24; `engines` requires >= 20. CI runs 24.

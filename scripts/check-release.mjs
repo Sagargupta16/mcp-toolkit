@@ -6,8 +6,8 @@
  *   node scripts/check-release.mjs          # versions + changelog
  *   node scripts/check-release.mjs v0.3.0   # ... and the tag
  *
- * The release workflow runs this before publishing, so a tag pushed without
- * the version bump or the changelog entry fails instead of shipping.
+ * Run it before tagging, so a tag without the version bump or the changelog
+ * entry is caught before anything ships.
  */
 
 import { readFileSync, readdirSync } from "node:fs";

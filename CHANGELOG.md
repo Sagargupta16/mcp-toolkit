@@ -26,10 +26,10 @@ all five `packages/*/package.json` carry one version, and it matches the heading
   and through the SDK. Results are in the README.
 - `examples/shared-state-redis.ts`: a stdio server whose cache and rate limit live in
   Redis.
-- A release workflow (`.github/workflows/release.yml`) that publishes all five packages to
-  npm with OIDC trusted publishing and provenance on a `v*` tag, after
-  `scripts/check-release.mjs` confirms every manifest, the changelog heading and the tag
-  agree. Nothing is published yet.
+- `scripts/check-release.mjs`: confirms every manifest carries one version, the changelog
+  has a heading for it and, when given, the tag matches. Nothing is published to npm yet:
+  the `@mcp-toolkit` scope belongs to an npm org this account is not a member of, so
+  there is no release workflow until the scope is settled.
 
 ### Changed
 
