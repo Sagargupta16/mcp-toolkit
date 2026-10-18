@@ -5,6 +5,39 @@ Versions before `0.2.0` were numbered inconsistently: entries below were tagged 
 are left as written rather than rewritten. From `0.2.0` on, the root `package.json` and
 all five `packages/*/package.json` carry one version, and it matches the heading here.
 
+## [0.3.0] - 2026-10-18
+
+### Added
+
+- Pluggable stores for the cache and the rate limit. `withCache` takes a `store`
+  (`CacheStore`: `get` and `set`, sync or async) and `withRateLimit` takes a `store`
+  (`RateLimitStore`: `consume`). Without one, behaviour is unchanged.
+- `redisCacheStore` and `redisRateLimitStore`, for Redis 5+ and Valkey. Both take a
+  function that sends one command (`(args) => client.sendCommand(args)` for node-redis),
+  so the packages still have no runtime dependencies. The token bucket runs as one Lua
+  script on the Redis clock, so concurrent replicas cannot overspend it, and each bucket
+  expires after one refill window. Cache entries are JSON with a `PX` expiry.
+- End-to-end tests (`npm run test:e2e`): a real `McpServer` and SDK `Client` over the
+  in-memory transport (auth, rate limit, cache, schema-less tools, `update({ callback })`)
+  and over Streamable HTTP (Origin and API key as real headers), plus Redis store tests
+  that run when `REDIS_URL` is set. A new CI job runs them against Redis 8 and Valkey 9
+  service containers.
+- `bench/overhead.ts` (`npm run bench`): per-call middleware overhead at handler level
+  and through the SDK. Results are in the README.
+- `examples/shared-state-redis.ts`: a stdio server whose cache and rate limit live in
+  Redis.
+- `scripts/check-release.mjs`: confirms every manifest carries one version, the changelog
+  has a heading for it and, when given, the tag matches. Nothing is published to npm yet:
+  the `@mcp-toolkit` scope belongs to an npm org this account is not a member of, so
+  there is no release workflow until the scope is settled.
+
+### Changed
+
+- Package manifests carry `homepage`, `bugs`, `engines` and `publishConfig.access: public`.
+- `getCache(server)` returns `undefined` when `withCache` was given a `store`.
+- Dev dependency: `redis` 6.3.0, used only by the tests and the example.
+- Tests: 85 unit (was 78) and 10 end-to-end.
+
 ## [0.2.1] - 2026-10-18
 
 ### Fixed

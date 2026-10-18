@@ -16,9 +16,17 @@ Stop reimplementing auth, caching, rate limiting, CORS, and logging for every MC
   your tool handlers do not change.
 - **Zero runtime dependencies.** Each package is a single TypeScript file on Node's own
   `crypto`, `fs` and `Map`. The SDK is a peer dependency, never bundled.
-- **Tested.** 78 unit tests (`node --test`, no test framework) cover every package,
+- **Scales past one process.** Pass a Redis or Valkey store and the cache and the rate
+  limit are shared by every replica. The token bucket runs as one Lua script, so the
+  limit stays exact under concurrency.
+- **Tested.** 85 unit tests (`node --test`, no test framework) cover every package,
   including the ordering, header-lookup and bypass cases listed under
-  [Limitations](#limitations-and-compatibility).
+  [Limitations](#limitations-and-compatibility). 6 end-to-end tests drive a real
+  `McpServer` from a real SDK `Client`, over the in-memory transport and over
+  Streamable HTTP, and 4 more run the Redis stores against Redis 8 and Valkey 9 in CI.
+- **Measured.** The full stack (cors, api-key auth, rate limit, cache) added 3.6 to 5.8
+  microseconds per tool call across four benchmark runs on a laptop; see
+  [Performance](#performance).
 
 Works with `@modelcontextprotocol/sdk` 1.x (verified on 1.32.1). The SDK v2 split
 packages (`@modelcontextprotocol/server`) are not supported yet.
@@ -28,8 +36,8 @@ packages (`@modelcontextprotocol/server`) are not supported yet.
 | Package | Description | Status |
 |---------|-------------|--------|
 | [`@mcp-toolkit/auth`](packages/auth/) | API key and JWT authentication | Beta |
-| [`@mcp-toolkit/cache`](packages/cache/) | Response caching with TTL and LRU | Beta |
-| [`@mcp-toolkit/rate-limit`](packages/rate-limit/) | Rate limiting with token bucket | Beta |
+| [`@mcp-toolkit/cache`](packages/cache/) | Response caching with TTL and LRU, in memory or Redis / Valkey | Beta |
+| [`@mcp-toolkit/rate-limit`](packages/rate-limit/) | Token bucket rate limiting, in memory or Redis / Valkey | Beta |
 | [`@mcp-toolkit/logger`](packages/logger/) | Structured logging with JSON output and log levels | Beta |
 | [`@mcp-toolkit/cors`](packages/cors/) | Origin validation middleware | Beta |
 
@@ -173,6 +181,37 @@ Both strategy values are served by one LRU-with-TTL cache: an entry leaves when 
 exceeds `ttl` or when `maxSize` is reached, whichever comes first. `"ttl"` does not
 currently select a different eviction policy.
 
+### Shared state (Redis / Valkey)
+
+By default the cache and the token buckets live in process memory, so three replicas
+behind a load balancer allow three times the rate limit and cache three times. Give both
+a store and they share one Redis or Valkey:
+
+```typescript
+import { createClient } from "redis";
+import { withCache, redisCacheStore } from "@mcp-toolkit/cache";
+import { withRateLimit, redisRateLimitStore } from "@mcp-toolkit/rate-limit";
+
+const redis = await createClient({ url: process.env.REDIS_URL }).connect();
+const command = (args: string[]) => redis.sendCommand(args);
+
+withRateLimit(server, {
+  strategy: "token-bucket",
+  maxTokens: 60,
+  refillRate: 1,
+  store: redisRateLimitStore(command),
+});
+withCache(server, { strategy: "ttl", ttl: 300, store: redisCacheStore(command) });
+```
+
+The stores take a function that sends one command, not a client, so the packages keep
+zero runtime dependencies and any client works (ioredis:
+`(args) => redis.call(args[0]!, ...args.slice(1))`). The rate limit runs refill, take and
+write back as one `EVAL`, on the Redis server's clock, so two replicas cannot both spend
+the last token. Details in the [cache](packages/cache/README.md#sharing-the-cache-across-replicas)
+and [rate-limit](packages/rate-limit/README.md#one-limit-across-replicas) READMEs, and a
+runnable server in [examples/shared-state-redis.ts](examples/shared-state-redis.ts).
+
 ### Rate Limit
 
 Protect your server from abuse:
@@ -251,6 +290,8 @@ flowchart TD
     CACHE -- miss --> H["your tool handler"]
     H -->|"stored unless isError"| CACHE
     L["logger<br/>JSON to stderr"] -.->|used by handlers| H
+    RL -.->|"buckets"| S[("store<br/>process memory or<br/>Redis / Valkey")]
+    CACHE -.->|"entries"| S
 ```
 
 A thrown error reaches the SDK, which returns it to the client as a tool error.
@@ -267,8 +308,51 @@ such as `onLimited`) call.
 | `Origin` read only from real HTTP headers | `params._meta` is body content the caller writes, so trusting it would let any client name an allowed origin. |
 | Credentials accepted from headers or `params._meta` | stdio has no headers; `_meta` is its only per-request channel. |
 | Bounded rate-limit buckets (`maxBuckets`, idle eviction) | Bucket keys come from callers, so an unbounded map is a memory-exhaustion vector. |
+| Stores take a `(args) => Promise` command function, not a Redis client | Keeps zero runtime dependencies, and node-redis, ioredis and Valkey clients all fit without an adapter package. |
+| Redis token bucket is one Lua script using `TIME` | A read-then-write from Node would let two replicas spend the same token; the server clock removes host clock skew. Each bucket expires after one refill window, which bounds the key count. |
+| Store errors fail the call | A rate limiter that lets traffic through when Redis is down is not a rate limiter. Wrap the cache store if you want it to fail open. |
 | Logger defaults to `stderr` | On stdio, stdout is the JSON-RPC stream. |
 | No internal shared package | Each package publishes on its own. The registration-patching block is copied into four packages and kept byte-identical. |
+
+## Performance
+
+[`bench/overhead.ts`](bench/overhead.ts) measures what the middleware adds to a tool
+call, two ways: calling the wrapped handler directly (the middleware's own cost) and
+calling a real `McpServer` from a real `Client` over the SDK's in-memory transport
+(what a tool call pays end to end, JSON-RPC and zod validation included). Every case is
+warmed up, then timed in 15 interleaved rounds; the tables show the median round.
+
+```bash
+npm run build
+npm run bench
+```
+
+One run on 2026-10-18, Node 26.10.0, Windows 11, Intel Core i9-14900HX:
+
+| Layers (handler level) | us per call | Added (us) |
+|------------------------|------------:|-----------:|
+| bare handler (baseline) | 0.16 | - |
+| cors | 0.31 | 0.15 |
+| auth (api-key) | 1.90 | 1.74 |
+| auth (jwt HS256) | 10.94 | 10.78 |
+| rate-limit | 0.46 | 0.30 |
+| cache, every call a miss | 2.38 | 2.22 |
+| cache, every call a hit | 1.31 | 1.15 |
+| cors + auth (api-key) + rate-limit + cache (miss) | 5.57 | 5.41 |
+| cors + auth (jwt) + rate-limit + cache (miss) | 16.01 | 15.85 |
+
+| Through the SDK | us per `tools/call` | Added (us) |
+|-----------------|--------------------:|-----------:|
+| bare `McpServer` | 12.66 | - |
+| auth + rate-limit + cache, cache miss | 20.50 | 7.84 |
+| auth + rate-limit + cache, cache hit | 18.85 | 6.19 |
+
+Read these as orders of magnitude, not exact figures: four runs on the same laptop the
+same day put the full api-key stack between 3.75 and 5.98 us. What holds in every run is
+that the stack costs a few microseconds per call, JWT verification is the most
+expensive layer (HMAC plus JSON parsing on every call), and all of it is noise next to
+any tool that does I/O. The Redis stores add one network round trip each and are not in
+these tables.
 
 ## Limitations and compatibility
 
@@ -298,9 +382,10 @@ This is beta software. What does not work yet, stated plainly:
   there is no preflight handling and no response headers, and it cannot reliably see
   the HTTP method. Under stdio there is no origin at all, so an allowlist blocks
   everything.
-- **All state is in-process memory.** Cache entries and token buckets live in the
-  current Node process. Nothing is shared across workers, replicas, or restarts, so
-  rate limits are per-process rather than global.
+- **State is in-process memory unless you pass a store.** By default cache entries and
+  token buckets live in the current Node process, so nothing is shared across workers,
+  replicas, or restarts. The built-in Redis / Valkey stores fix that for the cache and
+  the rate limit; there is no store for anything else.
 - **The cache `strategy` field does not change eviction.** `"lru"` and `"ttl"` both
   use one LRU-with-TTL cache.
 

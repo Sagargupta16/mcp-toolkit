@@ -1,6 +1,7 @@
 # @mcp-toolkit/rate-limit
 
-Rate limiting middleware for MCP servers. Token bucket, global or per key.
+Rate limiting middleware for MCP servers. Token bucket, global or per key, in memory or
+shared through Redis / Valkey.
 
 Part of [mcp-toolkit](https://github.com/Sagargupta16/mcp-toolkit). Beta.
 
@@ -52,6 +53,7 @@ withRateLimit(server, {
   bucketKey: (extra) => String(extra.sessionId), // omit for one global bucket
   maxBuckets: 5000,        // cap on retained per-key buckets, default 5000
   onLimited: (info) => {}, // called on every rejection
+  store: undefined,        // a RateLimitStore; default is in-process memory
 });
 ```
 
@@ -93,10 +95,48 @@ a caller allocate buckets until the process runs out of memory. Two bounds apply
 - Beyond `maxBuckets` live keys, the least recently used bucket is evicted. Worst case,
   one client gets a full bucket earlier than it should.
 
+## One limit across replicas
+
+In-memory buckets are per process: three replicas behind a load balancer allow three
+times the limit. Pass a `store` to make the bucket shared. `redisRateLimitStore` is built
+in and works with Redis 5+ and Valkey:
+
+```typescript
+import { createClient } from "redis";
+import { withRateLimit, redisRateLimitStore } from "@mcp-toolkit/rate-limit";
+
+const redis = await createClient({ url: process.env.REDIS_URL }).connect();
+
+withRateLimit(server, {
+  strategy: "token-bucket",
+  maxTokens: 60,
+  refillRate: 1,
+  bucketKey: (extra) => (extra["auth"] as { payload?: { sub?: string } })?.payload?.sub ?? "anonymous",
+  store: redisRateLimitStore((args) => redis.sendCommand(args)),
+});
+```
+
+How it works:
+
+- **One Lua script per call.** Refill, take and write back run as a single `EVAL`, so
+  the check is atomic on the Redis server. Two replicas cannot both spend the last token.
+- **Redis time, not host time.** The script reads the clock with `TIME`, so clock skew
+  between replicas cannot mint extra tokens.
+- **Bounded keys.** Each bucket gets a `PEXPIRE` of one full refill window
+  (`maxTokens / refillRate` seconds). An expired bucket would have been full anyway, so
+  `maxBuckets` does not apply with a store.
+- **Fails closed.** A Redis error fails the tool call rather than letting it through.
+- Keys are `<prefix><bucketKey>`, prefix default `mcp-toolkit:rl:`. Without `bucketKey`
+  every call uses the key `global`.
+
+The store takes a function that sends one command, so any client works and the package
+keeps zero runtime dependencies. With ioredis: `(args) => redis.call(args[0]!, ...args.slice(1))`.
+Any object with `consume(key, config)` returning a `RateLimitInfo` is a `RateLimitStore`.
+
 ## Caveats
 
-- **Per-process, not global.** Buckets live in the current Node process, so limits are
-  not shared across workers or replicas and reset on restart.
+- **Per-process by default.** Without a `store`, buckets live in the current Node
+  process, so limits are not shared across workers or replicas and reset on restart.
 - **Tools only.** Resources, prompts, and completions are not intercepted.
 - **Apply after `withAuth`** if you key buckets off an authenticated identity, so the
   auth context exists by the time the limiter runs.

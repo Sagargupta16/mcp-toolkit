@@ -1,6 +1,6 @@
 {
   "name": "@mcp-toolkit/logger",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Structured logging for MCP servers - JSON output, log levels, and transports",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -26,6 +26,10 @@
   ],
   "author": "Sagar Gupta",
   "license": "MIT",
+  "homepage": "https://github.com/Sagargupta16/mcp-toolkit/tree/main/packages/logger#readme",
+  "bugs": {
+    "url": "https://github.com/Sagargupta16/mcp-toolkit/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Sagargupta16/mcp-toolkit.git",
@@ -33,5 +37,11 @@
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": ">=1.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

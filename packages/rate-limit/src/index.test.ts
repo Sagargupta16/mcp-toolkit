@@ -8,7 +8,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { RateLimitError, TokenBucket, withRateLimit } from "./index.js";
+import {
+  RateLimitError,
+  redisRateLimitStore,
+  TokenBucket,
+  withRateLimit,
+  type RateLimitInfo,
+  type TokenBucketConfig,
+} from "./index.js";
 
 type Handler = (...args: unknown[]) => unknown;
 
@@ -275,5 +282,104 @@ test("withRateLimit: rejects a maxBuckets below 1", () => {
         bucketKey: () => "k",
       }),
     RangeError,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Pluggable store
+// ---------------------------------------------------------------------------
+
+test("withRateLimit: a custom store decides, with the resolved bucket config", async () => {
+  const seen: Array<{ key: string; config: TokenBucketConfig }> = [];
+  let left = 1;
+  const server = withRateLimit(fakeServer(), {
+    strategy: "token-bucket",
+    maxTokens: 7,
+    refillRate: 2,
+    tokensPerRequest: 3,
+    store: {
+      consume: async (key, config): Promise<RateLimitInfo> => {
+        seen.push({ key, config });
+        const allowed = left-- > 0;
+        return { allowed, remaining: 0, limit: config.maxTokens, retryAfter: allowed ? 0 : 1.5 };
+      },
+    },
+  });
+  server.tool("t", "d", {}, () => OK);
+
+  assert.deepEqual(await server.handlers.get("t")!({}, {}), OK);
+  await assert.rejects(() => Promise.resolve(server.handlers.get("t")!({}, {})), (err: unknown) => {
+    assert.ok(err instanceof RateLimitError);
+    assert.equal(err.retryAfter, 1.5);
+    return true;
+  });
+  assert.deepEqual(seen[0], {
+    key: "global",
+    config: { maxTokens: 7, refillRate: 2, tokensPerRequest: 3 },
+  });
+});
+
+test("withRateLimit: a custom store receives the bucketKey result", async () => {
+  const keys: string[] = [];
+  const server = withRateLimit(fakeServer(), {
+    strategy: "token-bucket",
+    bucketKey: (extra) => String(extra["client"]),
+    store: {
+      consume: (key, config) => {
+        keys.push(key);
+        return { allowed: true, remaining: 1, limit: config.maxTokens, retryAfter: 0 };
+      },
+    },
+  });
+  server.tool("t", "d", {}, () => OK);
+
+  await server.handlers.get("t")!({}, { client: "alice" });
+  await server.handlers.get("t")!({}, { client: "bob" });
+
+  assert.deepEqual(keys, ["alice", "bob"]);
+  assert.equal(bucketCount(server), 0, "the in-memory manager is not used with a store");
+});
+
+test("redisRateLimitStore: sends one EVAL and maps the reply", async () => {
+  const sent: string[][] = [];
+  const replies: unknown[] = [
+    [1, "4.5"],
+    [0, "0.25"],
+  ];
+  const store = redisRateLimitStore(
+    async (args) => {
+      sent.push(args);
+      return replies.shift();
+    },
+    { prefix: "p:" },
+  );
+  const config = { maxTokens: 10, refillRate: 0.5, tokensPerRequest: 1 };
+
+  assert.deepEqual(await store.consume("alice", config), {
+    allowed: true,
+    remaining: 4,
+    limit: 10,
+    retryAfter: 0,
+  });
+  assert.deepEqual(await store.consume("alice", config), {
+    allowed: false,
+    remaining: 0,
+    limit: 10,
+    retryAfter: 1.5,
+  });
+
+  assert.equal(sent.length, 2);
+  const [cmd, , numKeys, key, ...argv] = sent[0]!;
+  assert.equal(cmd, "EVAL");
+  assert.equal(numKeys, "1");
+  assert.equal(key, "p:alice");
+  assert.deepEqual(argv, ["10", "0.5", "1"]);
+});
+
+test("redisRateLimitStore: an unexpected reply is an error, not an allow", async () => {
+  const store = redisRateLimitStore(async () => "OK");
+  await assert.rejects(
+    () => Promise.resolve(store.consume("k", { maxTokens: 1, refillRate: 1, tokensPerRequest: 1 })),
+    TypeError,
   );
 });

@@ -36,6 +36,27 @@ export type OnLimitedCallback = (info: RateLimitInfo & { toolName: string }) => 
  */
 export type BucketKeyExtractor = (extra: Record<string, unknown>) => string;
 
+/** The bucket parameters `withRateLimit` resolved from its options. */
+export interface TokenBucketConfig {
+  maxTokens: number;
+  refillRate: number;
+  tokensPerRequest: number;
+}
+
+/**
+ * Where `withRateLimit` keeps its token buckets.
+ *
+ * The default is in-process memory. A store shared by every replica (Redis,
+ * Valkey) makes the limit global instead of per-process; see
+ * {@link redisRateLimitStore}. `consume` must take the tokens atomically, or
+ * two replicas can both spend the last one. A store error propagates to the
+ * caller as a failed tool call, so the limiter fails closed.
+ */
+export interface RateLimitStore {
+  /** Take `config.tokensPerRequest` tokens from the bucket at `key`, if it has them. */
+  consume(key: string, config: TokenBucketConfig): RateLimitInfo | Promise<RateLimitInfo>;
+}
+
 // -- Strategy options -------------------------------------------------------
 
 export interface TokenBucketOptions {
@@ -79,6 +100,13 @@ export interface TokenBucketOptions {
    * @default 5000
    */
   maxBuckets?: number;
+  /**
+   * Store to keep buckets in instead of process memory. With a store,
+   * `maxBuckets` does not apply: the store bounds its own keys (the Redis store
+   * expires a bucket once it would have refilled). Without `bucketKey`, every
+   * call uses the bucket named `"global"`.
+   */
+  store?: RateLimitStore;
 }
 
 export type RateLimitOptions = TokenBucketOptions;
@@ -322,6 +350,8 @@ export function withRateLimit<T extends McpServerLike>(
   const onLimited = options.onLimited;
   const bucketKeyExtractor = options.bucketKey;
   const maxBuckets = options.maxBuckets ?? 5000;
+  const store = options.store;
+  const config: TokenBucketConfig = { maxTokens, refillRate, tokensPerRequest };
 
   // Either a single global bucket or per-key manager
   const manager = new BucketManager(maxTokens, refillRate, tokensPerRequest, maxBuckets);
@@ -333,19 +363,21 @@ export function withRateLimit<T extends McpServerLike>(
 
   patchToolRegistrars(server, (originalHandler, toolName) => {
     return async function rateLimitedHandler(...handlerArgs: unknown[]) {
-      // Determine which bucket to use
-      let bucket = globalBucket;
+      // The extractor receives the SDK's per-request `extra` object, which is
+      // the LAST handler argument -- and the only argument when the tool
+      // declared no input schema.
+      const key = bucketKeyExtractor
+        ? bucketKeyExtractor(splitHandlerArgs(handlerArgs).extra)
+        : "global";
 
-      if (bucketKeyExtractor) {
-        // The extractor receives the SDK's per-request `extra` object, which is
-        // the LAST handler argument -- and the only argument when the tool
-        // declared no input schema.
-        const { extra } = splitHandlerArgs(handlerArgs);
-        const key = bucketKeyExtractor(extra);
-        bucket = manager.getBucket(key);
+      let info: RateLimitInfo;
+      if (store) {
+        info = await store.consume(key, config);
+      } else {
+        // Either the single global bucket or one bucket per key.
+        const bucket = bucketKeyExtractor ? manager.getBucket(key) : globalBucket;
+        info = bucket.consume();
       }
-
-      const info = bucket.consume();
 
       if (!info.allowed) {
         if (onLimited) {
@@ -359,6 +391,113 @@ export function withRateLimit<T extends McpServerLike>(
   });
 
   return server;
+}
+
+// ---------------------------------------------------------------------------
+// Redis / Valkey store
+// ---------------------------------------------------------------------------
+
+/**
+ * Sends one command to Redis and resolves with its reply.
+ *
+ * Taking a function instead of a client keeps this package free of runtime
+ * dependencies and works with any client:
+ *
+ * - node-redis: `(args) => client.sendCommand(args)`
+ * - ioredis: `(args) => client.call(args[0]!, ...args.slice(1))`
+ */
+export type RedisCommand = (args: string[]) => Promise<unknown>;
+
+export interface RedisRateLimitStoreOptions {
+  /**
+   * Prefix added to every bucket key, so several servers can share one database.
+   * @default "mcp-toolkit:rl:"
+   */
+  prefix?: string;
+}
+
+/**
+ * The token bucket as one Lua script, so the read-refill-take-write cycle is
+ * atomic on the Redis server and two replicas cannot both spend the last token.
+ *
+ * Time comes from the Redis `TIME` command, not from each replica's clock, so
+ * clock skew between hosts cannot hand out extra tokens. A bucket expires once
+ * it would have refilled to capacity, which bounds the key count the same way
+ * the in-memory idle eviction does. The token count is returned as a string
+ * because Redis truncates Lua numbers to integers in replies.
+ */
+const TOKEN_BUCKET_LUA = `
+local max = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local cost = tonumber(ARGV[3])
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local state = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(state[1])
+local ts = tonumber(state[2])
+if tokens == nil or ts == nil then
+  tokens = max
+  ts = now
+end
+tokens = math.min(max, tokens + math.max(0, now - ts) / 1000 * rate)
+local allowed = 0
+if tokens >= cost then
+  tokens = tokens - cost
+  allowed = 1
+end
+redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', tostring(now))
+redis.call('PEXPIRE', KEYS[1], math.ceil(max / rate * 1000))
+return {allowed, tostring(tokens)}
+`;
+
+/**
+ * A {@link RateLimitStore} on Redis or Valkey, so every replica draws from the
+ * same buckets and the limit is global rather than per-process.
+ *
+ * Each `consume` is one `EVAL` round trip. Needs Redis 5+ or any Valkey (the
+ * script calls `TIME` before writing, which relies on effects replication).
+ *
+ * @example
+ * ```ts
+ * import { createClient } from "redis";
+ * const client = await createClient({ url: process.env.REDIS_URL }).connect();
+ * withRateLimit(server, {
+ *   strategy: "token-bucket",
+ *   maxTokens: 60,
+ *   refillRate: 1,
+ *   store: redisRateLimitStore((args) => client.sendCommand(args)),
+ * });
+ * ```
+ */
+export function redisRateLimitStore(
+  command: RedisCommand,
+  options: RedisRateLimitStoreOptions = {},
+): RateLimitStore {
+  const prefix = options.prefix ?? "mcp-toolkit:rl:";
+  return {
+    async consume(key, { maxTokens, refillRate, tokensPerRequest }) {
+      const reply = await command([
+        "EVAL",
+        TOKEN_BUCKET_LUA,
+        "1",
+        prefix + key,
+        String(maxTokens),
+        String(refillRate),
+        String(tokensPerRequest),
+      ]);
+      if (!Array.isArray(reply) || reply.length !== 2) {
+        throw new TypeError(`Unexpected reply from the rate limit script: ${JSON.stringify(reply)}`);
+      }
+      const allowed = Number(reply[0]) === 1;
+      const tokens = Number(String(reply[1]));
+      return {
+        allowed,
+        remaining: allowed ? Math.floor(tokens) : 0,
+        limit: maxTokens,
+        retryAfter: allowed ? 0 : (tokensPerRequest - tokens) / refillRate,
+      };
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
