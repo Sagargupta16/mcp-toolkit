@@ -247,6 +247,13 @@ function extractSubject(extra: Record<string, unknown>): string | undefined {
   return typeof sub === "string" ? sub : undefined;
 }
 
+/** True for an MCP tool result that reports a failure (`isError: true`). */
+function isErrorResult(result: unknown): boolean {
+  return (
+    !!result && typeof result === "object" && (result as Record<string, unknown>)["isError"] === true
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -316,7 +323,11 @@ export function withCache<T extends McpServerLike>(server: T, options: CacheOpti
       }
 
       const result = await originalHandler(...handlerArgs);
-      cache.set(cacheKey, result);
+      // A tool reports failure as a result with `isError: true`, not a throw.
+      // Caching it would replay a transient failure until the TTL ran out.
+      if (!isErrorResult(result)) {
+        cache.set(cacheKey, result);
+      }
       return result;
     };
   });

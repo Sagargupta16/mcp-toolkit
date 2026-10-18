@@ -126,6 +126,21 @@ test("withCache: a repeated call with the same args skips the handler", async ()
   assert.deepEqual(first, second);
 });
 
+test("withCache: an isError result is not cached", async () => {
+  const server = withCache(fakeServer(), { strategy: "lru", ttl: 60, maxSize: 10 });
+  let calls = 0;
+  server.tool("get", "d", {}, () => {
+    calls += 1;
+    return calls === 1 ? { isError: true, calls } : { calls };
+  });
+
+  const failed = await server.handlers.get("get")!({ q: "x" }, {});
+  const retried = await server.handlers.get("get")!({ q: "x" }, {});
+
+  assert.deepEqual(failed, { isError: true, calls: 1 });
+  assert.deepEqual(retried, { calls: 2 }, "a failure must not be replayed from cache");
+});
+
 test("withCache: different args are cached separately", async () => {
   const server = withCache(fakeServer(), { strategy: "lru", ttl: 60, maxSize: 10 });
   let calls = 0;

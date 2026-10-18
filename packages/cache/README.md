@@ -27,9 +27,13 @@ const server = new McpServer({ name: "demo", version: "1.0.0" });
 withCache(server, { strategy: "lru", ttl: 300, maxSize: 1000 });
 
 // A repeat call with the same arguments returns without re-running the handler.
-server.tool("get-data", "Fetch data", { query: z.string() }, async ({ query }) => ({
-  content: [{ type: "text" as const, text: await fetchExpensive(query) }],
-}));
+server.registerTool(
+  "get-data",
+  { description: "Fetch data", inputSchema: { query: z.string() } },
+  async ({ query }) => ({
+    content: [{ type: "text" as const, text: await fetchExpensive(query) }],
+  }),
+);
 
 // Manual invalidation and stats
 getCache(server)?.clear();
@@ -74,8 +78,9 @@ authentication happens at all.
   LRU-with-TTL cache: an entry leaves when it exceeds `ttl` or when `maxSize` is
   reached, whichever comes first.
 - **In-process memory only.** Nothing is shared across workers, replicas, or restarts.
-- **Errors are not cached.** A handler that throws is not stored, so the next call
-  re-runs it.
+- **Errors are not cached.** A handler that throws is not stored, and neither is a
+  result with `isError: true` (how MCP tools report failure), so the next call re-runs
+  the handler instead of replaying the failure for the whole TTL.
 - **TTL eviction is lazy.** Stale entries are dropped when touched; call `prune()` on
   the instance from `getCache` for an eager sweep.
 - **Tools only.** Resources, prompts, and completions are not intercepted.
