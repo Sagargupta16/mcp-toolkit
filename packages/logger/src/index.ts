@@ -121,6 +121,12 @@ function formatJson(entry: LogEntry, defaultMeta?: Record<string, unknown>): str
     ...defaultMeta,
     ...entry.data,
   };
+  // Reassign the core fields so caller data cannot overwrite them (a `level`
+  // key in `data` would otherwise relabel an info line as an error). Assigning
+  // an existing key keeps its position, so the output still starts with them.
+  obj["timestamp"] = entry.timestamp;
+  obj["level"] = entry.level;
+  obj["message"] = entry.message;
   if (entry.error) {
     obj["error"] = entry.error;
   }
