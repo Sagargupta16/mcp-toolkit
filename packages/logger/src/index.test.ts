@@ -75,6 +75,22 @@ test("json format emits one parsable object per line", () => {
   assert.equal(typeof entry["timestamp"], "string");
 });
 
+test("data cannot overwrite the timestamp, level or message", () => {
+  const captured = capture(() => {
+    createLogger({ defaultMeta: { level: "debug" } }).info("real", {
+      level: "error",
+      message: "forged",
+      timestamp: "1970-01-01T00:00:00.000Z",
+    });
+  });
+
+  const entry = JSON.parse(captured.stderr[0]!) as Record<string, unknown>;
+  assert.equal(entry["level"], "info");
+  assert.equal(entry["message"], "real");
+  assert.notEqual(entry["timestamp"], "1970-01-01T00:00:00.000Z");
+  assert.deepEqual(Object.keys(entry).slice(0, 3), ["timestamp", "level", "message"]);
+});
+
 test("entries below the configured level are discarded", () => {
   const captured = capture(() => {
     const logger = createLogger({ level: "warn" });

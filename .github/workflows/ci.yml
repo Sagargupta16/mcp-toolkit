@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
   pull_request:
+# Least privilege for every job; `security` widens its own grant below.
+permissions:
+  contents: read
 jobs:
   build:
     uses: Sagargupta16/shared-workflows/.github/workflows/node-ci.yml@main

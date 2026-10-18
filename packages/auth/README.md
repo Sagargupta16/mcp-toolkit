@@ -30,9 +30,11 @@ const server = new McpServer({ name: "demo", version: "1.0.0" });
 withAuth(server, { type: "api-key", keys: [apiKey], header: "x-api-key" });
 
 // Registered after withAuth, so this handler is guarded.
-server.tool("greet", "Greet a user", { name: z.string() }, async ({ name }) => ({
-  content: [{ type: "text" as const, text: `Hello, ${name}` }],
-}));
+server.registerTool(
+  "greet",
+  { description: "Greet a user", inputSchema: { name: z.string() } },
+  async ({ name }) => ({ content: [{ type: "text" as const, text: `Hello, ${name}` }] }),
+);
 ```
 
 An unauthenticated call rejects with `AuthError` before the handler runs. The verified

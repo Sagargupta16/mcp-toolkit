@@ -11,6 +11,18 @@
 
 Stop reimplementing auth, caching, rate limiting, CORS, and logging for every MCP server. MCP Toolkit provides drop-in packages that work with the TypeScript SDK.
 
+- **One line per concern.** `withAuth(server, ...)`, `withRateLimit(server, ...)`,
+  `withCache(server, ...)`, `withCors(server, ...)` wrap every tool registered afterwards;
+  your tool handlers do not change.
+- **Zero runtime dependencies.** Each package is a single TypeScript file on Node's own
+  `crypto`, `fs` and `Map`. The SDK is a peer dependency, never bundled.
+- **Tested.** 78 unit tests (`node --test`, no test framework) cover every package,
+  including the ordering, header-lookup and bypass cases listed under
+  [Limitations](#limitations-and-compatibility).
+
+Works with `@modelcontextprotocol/sdk` 1.x (verified on 1.32.1). The SDK v2 split
+packages (`@modelcontextprotocol/server`) are not supported yet.
+
 ## Packages
 
 | Package | Description | Status |
@@ -76,14 +88,20 @@ withCache(server, {
 });
 
 // Define tools - middleware applies automatically.
-// Tool params are a Zod raw shape (a plain object of Zod schemas), not JSON Schema.
-server.tool("get-data", "Fetch data with auth + cache + rate limiting", {
-  query: z.string().describe("Search query"),
-}, async ({ query }) => {
-  logger.info("Fetching data", { query });
-  const result = await fetchData(query);
-  return { content: [{ type: "text", text: JSON.stringify(result) }] };
-});
+// inputSchema is a Zod raw shape (a plain object of Zod schemas), not JSON Schema.
+// The deprecated `server.tool()` is wrapped the same way.
+server.registerTool(
+  "get-data",
+  {
+    description: "Fetch data with auth + cache + rate limiting",
+    inputSchema: { query: z.string().describe("Search query") },
+  },
+  async ({ query }) => {
+    logger.info("Fetching data", { query });
+    const result = await fetchData(query);
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+  },
+);
 
 // The packages compile to CommonJS, so there is no top-level await here.
 const transport = new StdioServerTransport();
@@ -181,9 +199,9 @@ const logger = createLogger({
 ```
 
 Transports default to `["stderr"]`. Do not switch to `"stdout"` on a stdio server:
-per the [MCP transports spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports),
-the server "MUST NOT write anything to its `stdout` that is not a valid MCP message",
-and "MAY write UTF-8 strings to its standard error (`stderr`) for logging purposes".
+per the [MCP stdio transport spec](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio)
+(2026-07-28 revision), the server "MUST NOT write anything to its `stdout` that is not a
+valid MCP message", and "MAY write UTF-8 strings to `stderr` for any logging purposes".
 A log line on stdout corrupts the JSON-RPC stream. `"stdout"` is only safe when the
 server does not speak MCP over stdio.
 
@@ -213,28 +231,44 @@ not here.
 
 ## Architecture
 
+There is no middleware runtime. Each `withX(server, options)` call replaces
+`server.tool` and `server.registerTool` with a version that wraps the handler before
+registering it, so a tool registered afterwards runs inside every layer applied so far.
+A guard on the returned `RegisteredTool` re-wraps a handler swapped in later through
+`update({ callback })`, so the layers cannot be dropped after registration.
+
+```mermaid
+flowchart TD
+    C["MCP client<br/>(Claude, Cursor, ...)"] -->|tools/call| T["SDK transport<br/>stdio / Streamable HTTP"]
+    T --> CORS{"cors<br/>Origin allowed?"}
+    CORS -- no --> E1["CorsError"]
+    CORS -- yes --> AUTH{"auth<br/>API key / JWT / custom"}
+    AUTH -- no --> E2["AuthError"]
+    AUTH -- "yes: sets extra.auth" --> RL{"rate-limit<br/>token left?"}
+    RL -- no --> E3["RateLimitError"]
+    RL -- yes --> CACHE{"cache<br/>hit for sub + tool + args?"}
+    CACHE -- hit --> R["cached result"]
+    CACHE -- miss --> H["your tool handler"]
+    H -->|"stored unless isError"| CACHE
+    L["logger<br/>JSON to stderr"] -.->|used by handlers| H
 ```
-MCP Client (Claude, Cursor, etc.)
-        |
-        v
-+-------------------------+
-|     MCP Transport       |
-| (stdio / Streamable HTTP)|
-+-------------------------+
-|   @mcp-toolkit/cors     |  <-- Origin validation
-+-------------------------+
-|   @mcp-toolkit/auth     |  <-- Authentication layer
-+-------------------------+
-| @mcp-toolkit/rate-limit |  <-- Rate limiting layer
-+-------------------------+
-|   @mcp-toolkit/cache    |  <-- Caching layer
-+-------------------------+
-|  @mcp-toolkit/logger    |  <-- Logging (all layers)
-+-------------------------+
-|   Your MCP Server       |
-|   (tools, resources)    |
-+-------------------------+
-```
+
+A thrown error reaches the SDK, which returns it to the client as a tool error.
+`@mcp-toolkit/logger` is not a layer: it is a plain logger your handlers (and callbacks
+such as `onLimited`) call.
+
+### Design decisions
+
+| Decision | Why |
+|----------|-----|
+| Patch the registration methods instead of the request router | `McpServer` has no per-call middleware hook (the SDK's own middleware is Express-level OAuth). Wrapping the handler at registration works on every transport without forking the SDK or replacing its `tools/call` handler. |
+| Last applied runs innermost | It follows from wrapping at registration. Documented loudly because the wrong order puts the cache in front of auth. |
+| Cache keys carry the caller's `sub` | Without it one caller's identity-dependent response is served to the next. |
+| `Origin` read only from real HTTP headers | `params._meta` is body content the caller writes, so trusting it would let any client name an allowed origin. |
+| Credentials accepted from headers or `params._meta` | stdio has no headers; `_meta` is its only per-request channel. |
+| Bounded rate-limit buckets (`maxBuckets`, idle eviction) | Bucket keys come from callers, so an unbounded map is a memory-exhaustion vector. |
+| Logger defaults to `stderr` | On stdio, stdout is the JSON-RPC stream. |
+| No internal shared package | Each package publishes on its own. The registration-patching block is copied into four packages and kept byte-identical. |
 
 ## Limitations and compatibility
 

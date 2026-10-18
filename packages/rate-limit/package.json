@@ -1,6 +1,6 @@
 {
   "name": "@mcp-toolkit/rate-limit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Rate limiting middleware for MCP servers - token bucket strategy",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -5,6 +5,35 @@ Versions before `0.2.0` were numbered inconsistently: entries below were tagged 
 are left as written rather than rewritten. From `0.2.0` on, the root `package.json` and
 all five `packages/*/package.json` carry one version, and it matches the heading here.
 
+## [0.2.1] - 2026-10-18
+
+### Fixed
+
+- `withCache` no longer caches a tool result that has `isError: true`. MCP tools report
+  failure that way rather than by throwing, so a transient failure used to be replayed
+  from the cache for the whole TTL. Reproduced against a real `McpServer` on SDK 1.31.0:
+  the first call failed, and the retry got the cached failure without the handler
+  running again.
+- The JSON logger no longer lets `data` or `defaultMeta` overwrite `timestamp`, `level`
+  or `message`. `logger.info("x", { level: "error" })` used to emit an entry labelled
+  `error`.
+- CI declares `permissions: contents: read` at the workflow level, which closes the two
+  open `actions/missing-workflow-permissions` code scanning alerts. The `security` job
+  keeps its own wider grant.
+
+### Changed
+
+- Dev dependencies: `@modelcontextprotocol/sdk` 1.32.1, `hono` 4.13.13, `zod` 4.6.7,
+  `@hono/node-server` 2.1.5, `@types/node` 25.9.9.
+- The root and package README examples use `server.registerTool()`, the SDK's current
+  API, instead of the deprecated `server.tool()`. Both are still wrapped.
+- The README architecture diagram is now a Mermaid flowchart of the real call path. The
+  old one drew the logger as a layer between the cache and the server, which it is not.
+  Added a design decisions table and a compatibility note (SDK 1.x; the v2
+  `@modelcontextprotocol/server` packages are not supported yet).
+- The stdio logging quote now cites the 2026-07-28 MCP spec revision.
+- Tests: 78 (was 76).
+
 ## [0.2.0] - 2026-09-06
 
 ### Fixed

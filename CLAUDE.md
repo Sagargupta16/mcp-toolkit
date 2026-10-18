@@ -12,7 +12,7 @@
 
 Public monorepo of reusable middleware packages (`@mcp-toolkit/*`) for building production MCP servers with the TypeScript SDK: auth, cache, rate-limit, logger, cors.
 
-Beta (v0.2.0). Not yet published to npm -- users clone and build from source.
+Beta (v0.2.1). Not yet published to npm -- users clone and build from source.
 
 ## Stack
 
@@ -38,7 +38,7 @@ npm run typecheck:examples   # examples/ only; needs a build first
 npm test
 ```
 
-76 tests across the five packages, run by `node --test "dist/**/*.test.js"`. They test against a small fake server object, not a real `McpServer`, so they need neither the SDK nor zod. Tests are compiled from `src/index.test.ts`, so `npm run build` must run first.
+78 tests across the five packages, run by `node --test "dist/**/*.test.js"`. They test against a small fake server object, not a real `McpServer`, so they need neither the SDK nor zod. Tests are compiled from `src/index.test.ts`, so `npm run build` must run first.
 
 ## Entry points
 
@@ -48,7 +48,7 @@ npm test
 ## Key files
 
 - `package.json` (root) -- workspace definition and all shared scripts
-- `packages/<name>/package.json` -- per-package metadata; keep versions in lockstep with the root (all 0.2.0)
+- `packages/<name>/package.json` -- per-package metadata; keep versions in lockstep with the root (all 0.2.1)
 - `.github/workflows/ci.yml` -- delegates to `Sagargupta16/shared-workflows` (node-ci with `run-typecheck: true` on Node 24 + security-scan), plus a local `examples` job that builds and typechecks `examples/`
 
 ## Gotchas
