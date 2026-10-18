@@ -61,7 +61,17 @@ npm run build
 ### Run Tests
 
 ```bash
-npm test
+npm test          # unit tests, every package (build first)
+npm run test:e2e  # real McpServer + Client; Redis store tests when REDIS_URL is set
+```
+
+The Redis store tests skip unless `REDIS_URL` points at a Redis 5+ or Valkey server.
+CI runs them against both, as service containers.
+
+### Benchmark
+
+```bash
+npm run bench     # per-call middleware overhead; build first
 ```
 
 ### Lint
@@ -226,6 +236,7 @@ zod; see any existing package for the pattern.
 - Run the full test suite before submitting:
   ```bash
   npm test
+  npm run test:e2e
   ```
 
 ## Submitting Changes

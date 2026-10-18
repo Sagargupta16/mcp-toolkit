@@ -12,7 +12,10 @@
     "lint": "npm run lint --workspaces --if-present",
     "clean": "npm run clean --workspaces --if-present && rm -rf node_modules",
     "typecheck": "tsc --noEmit",
-    "typecheck:examples": "tsc -p tsconfig.examples.json"
+    "typecheck:examples": "tsc -p tsconfig.examples.json",
+    "build:integration": "tsc -p tsconfig.integration.json",
+    "test:e2e": "npm run build:integration && node --test \"build/test/**/*.test.js\"",
+    "bench": "npm run build:integration && node build/bench/overhead.js"
   },
   "keywords": [
     "mcp",
@@ -34,6 +37,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@types/node": "^25.3.5",
     "hono": "^4.13.13",
+    "redis": "^6.3.0",
     "typescript": "^7.0.0",
     "zod": "^4.6.7"
   },

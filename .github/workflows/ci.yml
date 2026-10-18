@@ -28,6 +28,31 @@ jobs:
       # examples/ imports the packages by their published names, so dist must exist.
       - run: npm run build
       - run: npm run typecheck:examples
+  e2e:
+    name: End-to-end (${{ matrix.store }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The Redis stores claim Redis 5+ and Valkey; test one of each.
+        store: ["redis:8-alpine", "valkey/valkey:9-alpine"]
+    services:
+      redis:
+        image: ${{ matrix.store }}
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.x"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Real McpServer + Client tests, and the Redis store tests against the service.
+      - run: npm run test:e2e
+        env:
+          REDIS_URL: redis://localhost:6379
   security:
     uses: Sagargupta16/shared-workflows/.github/workflows/security-scan.yml@main
     permissions:

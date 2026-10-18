@@ -1,12 +1,13 @@
 # Examples
 
-Three runnable MCP servers built with the toolkit.
+Four runnable MCP servers built with the toolkit.
 
 | File | What it shows |
 |------|---------------|
 | [basic-auth-server.ts](basic-auth-server.ts) | API key auth, JWT auth, reading the auth context in a handler |
 | [full-middleware-stack.ts](full-middleware-stack.ts) | All five packages composed on one server |
 | [production-server.ts](production-server.ts) | Auth + rate limit + cache + logging with realistic tools and stats |
+| [shared-state-redis.ts](shared-state-redis.ts) | Cache and rate limit in Redis / Valkey, shared by every replica |
 
 ## Prerequisites
 
@@ -33,11 +34,12 @@ files stay compilable against the current SDK.
 
 | Variable | Used by | Default |
 |----------|---------|---------|
-| `MCP_API_KEY` | all three | `dev-api-key-12345` (basic, full), `prod-key-abc123` (production) |
+| `MCP_API_KEY` | all four | `dev-api-key-12345` (basic, full, shared-state), `prod-key-abc123` (production) |
 | `JWT_SECRET` | basic-auth-server (`jwt` mode) | `super-secret-jwt-key` |
 | `MCP_ALLOWED_ORIGINS` | full-middleware-stack | unset, so the origin allowlist is skipped |
 | `LOG_LEVEL` | production-server | `info` |
 | `LOG_FILE` | production-server | unset, so logs go to stderr only |
+| `REDIS_URL` | shared-state-redis | `redis://localhost:6379` |
 
 The defaults are development placeholders. Set real values before exposing any of these.
 
@@ -73,6 +75,14 @@ printf '%s\n' \
 Request `2` returns the greeting; request `3` returns
 `Missing API key in "x-api-key" header`. On a Streamable HTTP or SSE transport the same
 credential arrives as a real HTTP header instead.
+
+## Two replicas, one cache and one limit
+
+`shared-state-redis.ts` needs a Redis 5+ or Valkey server. Run two copies against the
+same `REDIS_URL` and call `slow-square` with the same `n` on each: the second answers
+from the shared cache, and its `computedBy` field still names the first process's pid.
+The 5-token bucket is shared too, so 5 calls in total go through before both copies
+answer `Rate limited`.
 
 ## What these examples do not show
 
