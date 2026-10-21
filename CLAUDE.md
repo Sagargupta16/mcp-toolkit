@@ -12,7 +12,7 @@
 
 Public monorepo of reusable middleware packages (`@mcp-toolkit/*`) for building production MCP servers with the TypeScript SDK: auth, cache, rate-limit, logger, cors.
 
-Beta (v0.3.0). Not yet published to npm -- users clone and build from source. The `@mcp-toolkit` npm scope is an existing npm org Sagar is not a member of (`npm team ls mcp-toolkit` returns 403), so publishing under these names fails; the scope (join the org or rename, e.g. `@sagargupta1610/*`) must be settled before any release workflow is added.
+Beta (v0.3.1). Not yet published to npm -- users clone and build from source. The `@mcp-toolkit` npm scope is an existing npm org Sagar is not a member of (`npm team ls mcp-toolkit` returns 403), so publishing under these names fails; the scope (join the org or rename, e.g. `@sagargupta1610/*`) must be settled before any release workflow is added.
 
 ## Stack
 
@@ -56,7 +56,8 @@ npm run test:e2e     # test/*.test.ts: 10 tests, real McpServer + Client; needs 
 ## Key files
 
 - `package.json` (root) -- workspace definition and all shared scripts
-- `packages/<name>/package.json` -- per-package metadata; keep versions in lockstep with the root (all 0.3.0); `scripts/check-release.mjs` enforces it
+- `packages/<name>/package.json` -- per-package metadata; keep versions in lockstep with the root (all 0.3.1); `scripts/check-release.mjs` enforces it
+- `docs/diagrams/request-path.yaml` -- orrery spec behind the README architecture figure; edit it, never the SVGs, and re-render with the command in its header
 - `.github/workflows/ci.yml` -- delegates to `Sagargupta16/shared-workflows` (node-ci with `run-typecheck: true` on Node 24 + security-scan), plus a local `examples` job that builds and typechecks `examples/`, and an `e2e` job (Redis and Valkey service matrix)
 ## Gotchas
 
