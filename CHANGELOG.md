@@ -5,6 +5,17 @@ Versions before `0.2.0` were numbered inconsistently: entries below were tagged 
 are left as written rather than rewritten. From `0.2.0` on, the root `package.json` and
 all five `packages/*/package.json` carry one version, and it matches the heading here.
 
+## [0.3.1] - 2026-10-21
+
+### Changed
+
+- The README architecture diagram is now an orrery figure,
+  `docs/diagrams/request-path.yaml`, rendered to light and dark SVGs that follow the
+  reader's theme. It draws the same call path as the Mermaid flowchart it replaces, plus
+  what that one left out: `withCors` belongs on HTTP transports only, the handler is
+  registered after the `withX` calls, and the store is outside the server process.
+  Every box carries the file and line it comes from. No code changes.
+
 ## [0.3.0] - 2026-10-18
 
 ### Added

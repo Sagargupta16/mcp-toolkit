@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Sagargupta16/orrery/main/skills/orrery/references/diagram.schema.json
+# Rendered with orrery (github.com/Sagargupta16/orrery):
+#   orrery render docs/diagrams/request-path.yaml -o docs/diagrams/request-path -f svg --theme both
+# Reviewed at README width: orrery review docs/diagrams/request-path.yaml --width 880
+title: One tools/call through mcp-toolkit
+subtitle: "Each withX wraps the tools registered after it, so the last one applied runs innermost: apply cors, auth, rate-limit, cache in that order."
+direction: down
+legend:
+  dashed: "Denied: thrown, and the SDK returns it to the client as a tool error"
+  dotted: "Optional store; without one, state stays in process memory"
+
+groups:
+  proc: { type: box, label: Your MCP server process }
+  chain: { type: zone, label: "Wrapped tool handler, outermost first", in: proc, cols: 5 }
+
+nodes:
+  client: { icon: logos:claude-icon, label: MCP client, note: "Claude, Cursor, any SDK client", evidence: "test/e2e.test.ts:17#Client" }
+  server: { icon: logos:model-context-protocol-icon, label: McpServer, note: stdio or Streamable HTTP, in: proc, evidence: ["examples/full-middleware-stack.ts:97#StdioServerTransport", "test/e2e.test.ts:161#StreamableHTTPServerTransport"] }
+  cors: { icon: tabler:world-check, label: withCors, note: "Origin list, HTTP only", in: chain, evidence: "packages/cors/src/index.ts:150#withCors" }
+  auth: { icon: tabler:key, label: withAuth, note: "API key, JWT or custom", in: chain, evidence: "packages/auth/src/index.ts:418#withAuth" }
+  ratelimit: { icon: tabler:gauge, label: withRateLimit, note: token bucket, in: chain, evidence: "packages/rate-limit/src/index.ts:343#withRateLimit" }
+  cache: { icon: github:cache, label: withCache, note: "key: sub + tool + args", in: chain, evidence: "packages/cache/src/index.ts:311#withCache" }
+  handler: { icon: tabler:code, label: Your tool handler, note: registered after them, in: chain, evidence: "examples/full-middleware-stack.ts:76#server.tool" }
+  logger: { icon: tabler:file-text, label: createLogger, note: "not a layer: JSON to stderr", in: proc, align: server, evidence: "packages/logger/src/index.ts:297#createLogger" }
+  error: { icon: tabler:ban, label: Tool error, note: "CorsError, AuthError, RateLimitError", evidence: ["packages/cors/src/index.ts:171#CorsError", "packages/auth/src/index.ts:446#verify", "packages/rate-limit/src/index.ts:386#RateLimitError"] }
+  store: { icon: logos:redis, label: Redis or Valkey, note: shared by every replica, evidence: ["packages/rate-limit/src/index.ts:472#redisRateLimitStore", "packages/cache/src/index.ts:410#redisCacheStore"] }
+
+edges:
+  - client -> server: tools/call
+  - server -> cors
+  - cors -> auth
+  - auth -> ratelimit
+  - ratelimit -> cache
+  - cache -> handler: miss
+  - handler -> logger: { label: logger.info(), evidence: "examples/full-middleware-stack.ts:84#logger.info" }
+  - { from: [cors, auth, ratelimit], to: error, line: dashed, color: "#C7243A" }
+  - { from: ratelimit, to: store, line: dotted, label: take a token, evidence: "packages/rate-limit/src/index.ts:375#store.consume" }
+  - { from: cache, to: store, line: dotted, label: "get, set unless isError", evidence: ["packages/cache/src/index.ts:350#store.get", "packages/cache/src/index.ts:359#store.set"] }

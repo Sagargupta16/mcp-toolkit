@@ -276,23 +276,13 @@ registering it, so a tool registered afterwards runs inside every layer applied 
 A guard on the returned `RegisteredTool` re-wraps a handler swapped in later through
 `update({ callback })`, so the layers cannot be dropped after registration.
 
-```mermaid
-flowchart TD
-    C["MCP client<br/>(Claude, Cursor, ...)"] -->|tools/call| T["SDK transport<br/>stdio / Streamable HTTP"]
-    T --> CORS{"cors<br/>Origin allowed?"}
-    CORS -- no --> E1["CorsError"]
-    CORS -- yes --> AUTH{"auth<br/>API key / JWT / custom"}
-    AUTH -- no --> E2["AuthError"]
-    AUTH -- "yes: sets extra.auth" --> RL{"rate-limit<br/>token left?"}
-    RL -- no --> E3["RateLimitError"]
-    RL -- yes --> CACHE{"cache<br/>hit for sub + tool + args?"}
-    CACHE -- hit --> R["cached result"]
-    CACHE -- miss --> H["your tool handler"]
-    H -->|"stored unless isError"| CACHE
-    L["logger<br/>JSON to stderr"] -.->|used by handlers| H
-    RL -.->|"buckets"| S[("store<br/>process memory or<br/>Redis / Valkey")]
-    CACHE -.->|"entries"| S
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/request-path-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/diagrams/request-path-light.svg">
+  <img width="880" src="docs/diagrams/request-path-light.svg" alt="One tools/call through mcp-toolkit. An MCP client such as Claude or Cursor sends tools/call to the McpServer in your server process, over stdio or Streamable HTTP. The call then runs through the wrapped tool handler, outermost first: withCors (an Origin allowlist, HTTP only), withAuth (API key, JWT or custom), withRateLimit (token bucket), withCache (keyed by caller sub, tool and arguments), and on a cache miss your tool handler, registered after them. withCors, withAuth and withRateLimit can each deny the call with a thrown CorsError, AuthError or RateLimitError, which the SDK returns to the client as a tool error. The rate limit takes a token from, and the cache gets and sets entries (never isError results) in, an optional Redis or Valkey store shared by every replica; without one, state stays in process memory. The handler calls createLogger's logger, which is not a layer and writes JSON to stderr.">
+</picture>
+
+The spec behind the picture is [`docs/diagrams/request-path.yaml`](docs/diagrams/request-path.yaml), rendered with [orrery](https://github.com/Sagargupta16/orrery).
 
 A thrown error reaches the SDK, which returns it to the client as a tool error.
 `@mcp-toolkit/logger` is not a layer: it is a plain logger your handlers (and callbacks
