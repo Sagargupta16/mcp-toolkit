@@ -1,6 +1,6 @@
 {
   "name": "@mcp-toolkit/logger",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Structured logging for MCP servers - JSON output, log levels, and transports",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
