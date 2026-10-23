@@ -1,6 +1,6 @@
 {
   "name": "@mcp-toolkit/cache",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Response caching middleware for MCP servers - LRU and TTL strategies",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

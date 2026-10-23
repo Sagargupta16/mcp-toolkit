@@ -5,6 +5,14 @@ Versions before `0.2.0` were numbered inconsistently: entries below were tagged 
 are left as written rather than rewritten. From `0.2.0` on, the root `package.json` and
 all five `packages/*/package.json` carry one version, and it matches the heading here.
 
+## [0.3.2] - 2026-10-24
+
+### Changed
+
+- Redrew the README architecture diagram with orrery 0.12.0's 64 px icons (they were
+  48 px). The spec, `docs/diagrams/request-path.yaml`, is unchanged; only the light and
+  dark SVGs were re-rendered. No code changes.
+
 ## [0.3.1] - 2026-10-21
 
 ### Changed
