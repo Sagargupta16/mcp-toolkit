@@ -5,6 +5,17 @@ Versions before `0.2.0` were numbered inconsistently: entries below were tagged 
 are left as written rather than rewritten. From `0.2.0` on, the root `package.json` and
 all five `packages/*/package.json` carry one version, and it matches the heading here.
 
+## [0.3.3] - 2026-10-24
+
+### Security
+
+- Lockfile bumps for transitive dev dependencies of `@modelcontextprotocol/sdk`:
+  `body-parser` 2.3.0 to 2.4.0 (GHSA-27r3-jxmh-p828, with `qs` 6.16.0 to 6.16.1),
+  `fast-uri` 4.2.1 to 4.2.3 (GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr,
+  GHSA-xhq7-xmqj-769h, GHSA-333x-w4r6-6crp) and `ip-address` 10.7.3 to 10.7.4
+  (GHSA-rxp7-6hxx-x8q5, CVE-2026-111997). The packages have no runtime dependencies,
+  so nothing they ship changes.
+
 ## [0.3.2] - 2026-10-24
 
 ### Changed
