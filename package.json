@@ -1,6 +1,6 @@
 {
   "name": "mcp-toolkit",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "TypeScript middleware toolkit for MCP servers - authentication, caching, rate limiting, CORS, logging (beta)",
   "workspaces": [
